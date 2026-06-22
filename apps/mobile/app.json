@@ -1,0 +1,50 @@
+{
+  "expo": {
+    "name": "Family Finance",
+    "slug": "family-finance",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "scheme": "familyfinance",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "splash": {
+      "resizeMode": "contain",
+      "backgroundColor": "#0E1726"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.familyfinance.app"
+    },
+    "android": {
+      "package": "com.familyfinance.app"
+    },
+    "plugins": [
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Приложению нужен доступ к фото, чтобы распознавать чеки и банковские уведомления.",
+          "cameraPermission": "Приложению нужен доступ к камере, чтобы сфотографировать чек."
+        }
+      ]
+    ],
+    "extra": {
+      "apiUrl": "http://localhost:3000"
+    },
+    "icon": "./public/icon-512.png",
+    "web": {
+      "output": "single",
+      "favicon": "./public/favicon.png",
+      "name": "Family Finance",
+      "shortName": "Finance",
+      "lang": "ru",
+      "scope": "/",
+      "themeColor": "#0E1726",
+      "backgroundColor": "#0E1726",
+      "description": "Семейный финансовый портфель: доходы, расходы, обязательные платежи и аналитика.",
+      "display": "standalone",
+      "startUrl": "/",
+      "orientation": "portrait",
+      "barStyle": "black"
+    }
+  }
+}

@@ -1,0 +1,48 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build output
+dist/
+build/
+*.tsbuildinfo
+
+# Env
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Prisma
+apps/backend/prisma/*.db
+
+# Uploads (local dev file storage)
+apps/backend/uploads/
+
+# Expo
+.expo/
+apps/mobile/dist/
+apps/mobile/web-build/
+*.orig.*
+
+# Editor / OS
+.idea/
+.vscode/*
+!.vscode/extensions.json
+.DS_Store
+Thumbs.db
+
+# Coverage
+coverage/
+
+# e2e verification artifacts
+apps/backend/scripts/verify.log
+apps/backend/scripts/run-verify.cmd

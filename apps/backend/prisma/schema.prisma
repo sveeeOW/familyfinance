@@ -1,0 +1,599 @@
+// Family Finance — Prisma schema
+// Реализует модель данных из раздела 18 ТЗ + вспомогательные таблицы:
+// refresh-токены, токены привязки Telegram, бюджеты/лимиты (§16),
+// доли распределения расходов (§22), правила автокатегоризации (§11.4), аудит изменений.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Enums
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum PortfolioType {
+  PERSONAL // личный
+  FAMILY // семейный
+  SHARED // совместный
+  INVESTMENT // инвестиционный
+  GOAL // целевой
+  OTHER // другой
+}
+
+enum MemberRole {
+  OWNER // владелец портфеля
+  MEMBER // участник
+  VIEWER // только просмотр
+}
+
+// Уровни доступа из §6.3
+enum AccessLevel {
+  FULL // полный доступ
+  LIMITED // ограниченный доступ
+  VIEW_ONLY // только просмотр
+  PRIVATE // личный режим (часть расходов скрыта)
+}
+
+enum MemberStatus {
+  ACTIVE
+  INVITED
+  REMOVED
+}
+
+enum InviteStatus {
+  ACTIVE
+  EXPIRED
+  REVOKED
+}
+
+enum IncomeType {
+  SALARY // зарплата
+  ADVANCE // аванс
+  BONUS // премия
+  DIVIDENDS // дивиденды
+  INVESTMENT // инвестиционный доход
+  DEPOSIT_INTEREST // проценты по вкладам
+  DEBT_RETURN // возврат долга
+  GIFT // подарок
+  SIDE_JOB // подработка
+  OTHER // иной доход
+}
+
+enum Recurrence {
+  MONTHLY // ежемесячно
+  TWICE_A_MONTH // два раза в месяц
+  WEEKLY // еженедельно
+  ONE_TIME // разово
+  CUSTOM // произвольный график
+}
+
+// Тип расхода: личный / общий (§8.4)
+enum ExpenseScope {
+  PERSONAL
+  SHARED
+}
+
+// Источник расхода (§18.6 поле source)
+enum ExpenseSource {
+  MANUAL // вручную
+  TELEGRAM_BOT // через Telegram-бота
+  MOBILE_OCR // скан в приложении
+  IMPORT // импорт
+  RECURRING // сгенерирован регулярным платежом
+}
+
+// Статусы AI-обработки (§11.2) + общий жизненный цикл расхода
+enum ExpenseStatus {
+  CONFIRMED // распознан и подтверждён / добавлен вручную
+  PENDING // распознан, ожидает подтверждения
+  NEEDS_CLARIFICATION // требует уточнения
+  RECOGNITION_ERROR // ошибка распознавания
+}
+
+// Способ распределения общего расхода (§22)
+enum SplitType {
+  NONE // без распределения
+  EQUAL // поровну
+  PERCENT // по процентам
+  SHARES // произвольные доли / "один оплатил, остальные компенсируют"
+}
+
+enum AssetType {
+  STOCK // акция
+  BOND // облигация
+  FUND // фонд
+  DEPOSIT // вклад
+  CRYPTO // криптовалюта
+  OTHER // другое
+}
+
+enum DividendStatus {
+  EXPECTED // ожидается
+  RECEIVED // получено
+  CANCELED // отменено
+}
+
+enum CreditStatus {
+  ACTIVE
+  CLOSED
+  OVERDUE
+}
+
+enum BudgetScope {
+  PORTFOLIO // общий месячный лимит портфеля
+  CATEGORY // лимит по категории
+  MEMBER // лимит по участнику
+}
+
+enum AiStatus {
+  CONFIRMED
+  PENDING
+  NEEDS_CLARIFICATION
+  ERROR
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Users & auth (§18.1, §5)
+// ─────────────────────────────────────────────────────────────────────────────
+
+model User {
+  id              String   @id @default(uuid())
+  name            String
+  email           String?  @unique
+  phone           String?  @unique
+  passwordHash    String   @map("password_hash")
+  telegramId      String?  @unique @map("telegram_id")
+  avatarUrl       String?  @map("avatar_url")
+  defaultCurrency String   @default("RUB") @map("default_currency")
+  timezone        String   @default("Europe/Moscow")
+  locale          String   @default("ru")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  ownedPortfolios   Portfolio[]        @relation("PortfolioOwner")
+  memberships       PortfolioMember[]
+  createdInvites    InviteLink[]       @relation("InviteCreator")
+  incomes           Income[]
+  expenses          Expense[]          @relation("ExpenseUser")
+  paidExpenses      Expense[]          @relation("ExpensePayer")
+  expenseShares     ExpenseShare[]
+  recurringPayments RecurringPayment[]
+  credits           Credit[]
+  investments       Investment[]
+  dividends         Dividend[]
+  refreshTokens     RefreshToken[]
+  telegramLinks     TelegramLinkToken[]
+  deviceTokens      DeviceToken[]
+  categoryRules     CategoryRule[]
+  resetTokens       PasswordResetToken[]
+  budgets           Budget[]
+
+  @@map("users")
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  tokenHash String   @map("token_hash")
+  expiresAt DateTime @map("expires_at")
+  revokedAt DateTime? @map("revoked_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("refresh_tokens")
+}
+
+model PasswordResetToken {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  codeHash  String   @map("code_hash")
+  expiresAt DateTime @map("expires_at")
+  usedAt    DateTime? @map("used_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("password_reset_tokens")
+}
+
+// Push-токены устройств (Expo Push) для уведомлений (§15)
+model DeviceToken {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  token     String   @unique // ExponentPushToken[...]
+  platform  String? // ios | android
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("device_tokens")
+}
+
+// Код привязки Telegram-аккаунта (§10.2)
+model TelegramLinkToken {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  code      String   @unique
+  expiresAt DateTime @map("expires_at")
+  usedAt    DateTime? @map("used_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("telegram_link_tokens")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Portfolios & membership (§18.2–18.4, §6)
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Portfolio {
+  id          String        @id @default(uuid())
+  name        String
+  type        PortfolioType @default(PERSONAL)
+  ownerUserId String        @map("owner_user_id")
+  currency    String        @default("RUB")
+  description String?
+  isDefault   Boolean       @default(false) @map("is_default")
+  createdAt   DateTime      @default(now()) @map("created_at")
+  updatedAt   DateTime      @updatedAt @map("updated_at")
+
+  owner             User               @relation("PortfolioOwner", fields: [ownerUserId], references: [id])
+  members           PortfolioMember[]
+  invites           InviteLink[]
+  incomes           Income[]
+  expenses          Expense[]
+  categories        Category[]
+  recurringPayments RecurringPayment[]
+  credits           Credit[]
+  investments       Investment[]
+  dividends         Dividend[]
+  budgets           Budget[]
+
+  @@index([ownerUserId])
+  @@map("portfolios")
+}
+
+model PortfolioMember {
+  id          String       @id @default(uuid())
+  portfolioId String       @map("portfolio_id")
+  userId      String       @map("user_id")
+  role        MemberRole   @default(MEMBER)
+  accessLevel AccessLevel  @default(FULL) @map("access_level")
+  status      MemberStatus @default(ACTIVE)
+  joinedAt    DateTime     @default(now()) @map("joined_at")
+
+  portfolio Portfolio @relation(fields: [portfolioId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([portfolioId, userId])
+  @@index([userId])
+  @@map("portfolio_members")
+}
+
+model InviteLink {
+  id              String       @id @default(uuid())
+  portfolioId     String       @map("portfolio_id")
+  createdByUserId String       @map("created_by_user_id")
+  token           String       @unique @map("invite_token")
+  role            MemberRole   @default(MEMBER)
+  accessLevel     AccessLevel  @default(FULL) @map("access_level")
+  expiresAt       DateTime?    @map("expires_at")
+  maxUses         Int          @default(1) @map("max_uses")
+  usedCount       Int          @default(0) @map("used_count")
+  status          InviteStatus @default(ACTIVE)
+  createdAt       DateTime     @default(now()) @map("created_at")
+
+  portfolio Portfolio @relation(fields: [portfolioId], references: [id], onDelete: Cascade)
+  createdBy User      @relation("InviteCreator", fields: [createdByUserId], references: [id])
+
+  @@index([portfolioId])
+  @@map("invite_links")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Income (§18.5, §7)
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Income {
+  id           String     @id @default(uuid())
+  portfolioId  String     @map("portfolio_id")
+  userId       String     @map("user_id")
+  type         IncomeType @default(SALARY)
+  amount       Decimal    @db.Decimal(18, 2)
+  currency     String     @default("RUB")
+  date         DateTime
+  recurrence   Recurrence @default(MONTHLY) @map("recurrence_type")
+  paymentDay   Int?       @map("payment_day") // число месяца для регулярного дохода
+  description  String?
+  isForecast   Boolean    @default(false) @map("is_forecast")
+  createdAt    DateTime   @default(now()) @map("created_at")
+  updatedAt    DateTime   @updatedAt @map("updated_at")
+
+  portfolio Portfolio @relation(fields: [portfolioId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([portfolioId])
+  @@index([userId])
+  @@map("incomes")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Expenses & splits (§18.6, §8, §22)
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Expense {
+  id            String        @id @default(uuid())
+  portfolioId   String        @map("portfolio_id")
+  userId        String        @map("user_id") // кто внёс запись
+  paidByUserId  String        @map("paid_by_user_id") // кто фактически оплатил
+  categoryId    String?       @map("category_id")
+  amount        Decimal       @db.Decimal(18, 2)
+  currency      String        @default("RUB")
+  date          DateTime
+  title         String?
+  description   String?
+  merchant      String?
+  source        ExpenseSource @default(MANUAL)
+  scope         ExpenseScope  @default(SHARED) @map("scope")
+  splitType     SplitType     @default(NONE) @map("split_type")
+  status        ExpenseStatus @default(CONFIRMED)
+  aiConfidence  Int?          @map("ai_confidence")
+  screenshotUrl String?       @map("screenshot_url")
+  paymentMethod String?       @map("payment_method")
+  comment       String?
+  createdAt     DateTime      @default(now()) @map("created_at")
+  updatedAt     DateTime      @updatedAt @map("updated_at")
+
+  portfolio Portfolio      @relation(fields: [portfolioId], references: [id], onDelete: Cascade)
+  user      User           @relation("ExpenseUser", fields: [userId], references: [id])
+  paidBy    User           @relation("ExpensePayer", fields: [paidByUserId], references: [id])
+  category  Category?      @relation(fields: [categoryId], references: [id])
+  shares    ExpenseShare[]
+
+  @@index([portfolioId, date])
+  @@index([categoryId])
+  @@index([userId])
+  @@map("expenses")
+}
+
+// Доли участников в общем расходе (§22)
+model ExpenseShare {
+  id        String  @id @default(uuid())
+  expenseId String  @map("expense_id")
+  userId    String  @map("user_id")
+  amount    Decimal @db.Decimal(18, 2)
+  percent   Decimal? @db.Decimal(5, 2)
+  settled   Boolean @default(false) // компенсирована ли доля плательщику
+
+  expense Expense @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([expenseId, userId])
+  @@map("expense_shares")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Categories & auto-categorization rules (§18.7, §9)
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Category {
+  id          String   @id @default(uuid())
+  portfolioId String?  @map("portfolio_id") // null = глобальная системная категория
+  name        String
+  parentId    String?  @map("parent_id")
+  icon        String?
+  color       String?
+  isSystem    Boolean  @default(false) @map("is_system")
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  portfolio Portfolio?     @relation(fields: [portfolioId], references: [id], onDelete: Cascade)
+  parent            Category?          @relation("CategoryTree", fields: [parentId], references: [id])
+  children          Category[]         @relation("CategoryTree")
+  expenses          Expense[]
+  rules             CategoryRule[]
+  recurringPayments RecurringPayment[]
+
+  @@index([portfolioId])
+  @@map("categories")
+}
+
+// Правила автокатегоризации по ключевым словам (§9.3) + обучение на правках (§11.4)
+model CategoryRule {
+  id          String   @id @default(uuid())
+  portfolioId String?  @map("portfolio_id") // область действия: портфель
+  userId      String?  @map("user_id") // или конкретный пользователь
+  categoryId  String   @map("category_id")
+  keyword     String // ключ (merchant / слово), нормализованный в нижний регистр
+  weight      Int      @default(1) // частота подтверждений (для обучения)
+  isSystem    Boolean  @default(false) @map("is_system")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  category  Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  user      User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([keyword])
+  @@index([portfolioId])
+  @@index([userId])
+  @@map("category_rules")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Recurring payments (§18.8, §8.2)
+// ─────────────────────────────────────────────────────────────────────────────
+
+model RecurringPayment {
+  id              String     @id @default(uuid())
+  portfolioId     String     @map("portfolio_id")
+  userId          String?    @map("user_id") // ответственный
+  categoryId      String?    @map("category_id")
+  title           String
+  amount          Decimal    @db.Decimal(18, 2)
+  currency        String     @default("RUB")
+  paymentDay      Int        @map("payment_day") // число месяца
+  recurrence      Recurrence @default(MONTHLY) @map("recurrence_type")
+  nextPaymentDate DateTime   @map("next_payment_date")
+  paymentMethod   String?    @map("payment_method")
+  reminderDays    Int[]      @default([7, 3, 1, 0]) @map("reminder_days")
+  comment         String?
+  status          CreditStatus @default(ACTIVE)
+  createdAt       DateTime   @default(now()) @map("created_at")
+
+  portfolio Portfolio @relation(fields: [portfolioId], references: [id], onDelete: Cascade)
+  user      User?     @relation(fields: [userId], references: [id])
+  category  Category? @relation(fields: [categoryId], references: [id])
+
+  @@index([portfolioId])
+  @@index([nextPaymentDate])
+  @@map("recurring_payments")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Credits (§18.9, §12)
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Credit {
+  id              String       @id @default(uuid())
+  portfolioId     String       @map("portfolio_id")
+  userId          String?      @map("user_id") // ответственный
+  title           String
+  bankName        String?      @map("bank_name")
+  initialAmount   Decimal      @db.Decimal(18, 2) @map("initial_amount")
+  remainingAmount Decimal      @db.Decimal(18, 2) @map("remaining_amount")
+  monthlyPayment  Decimal      @db.Decimal(18, 2) @map("monthly_payment")
+  interestRate    Decimal?     @db.Decimal(6, 3) @map("interest_rate")
+  paymentDay      Int          @map("payment_day")
+  startDate       DateTime?    @map("start_date")
+  endDate         DateTime?    @map("end_date")
+  reminderDays    Int[]        @default([7, 3, 1, 0]) @map("reminder_days")
+  comment         String?
+  status          CreditStatus @default(ACTIVE)
+  createdAt       DateTime     @default(now()) @map("created_at")
+
+  portfolio Portfolio @relation(fields: [portfolioId], references: [id], onDelete: Cascade)
+  user      User?     @relation(fields: [userId], references: [id])
+
+  @@index([portfolioId])
+  @@map("credits")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Investments & dividends (§18.10–18.11, §13)
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Investment {
+  id               String    @id @default(uuid())
+  portfolioId      String    @map("portfolio_id")
+  userId           String?   @map("user_id")
+  assetName        String    @map("asset_name")
+  assetType        AssetType @default(STOCK) @map("asset_type")
+  quantity         Decimal   @db.Decimal(18, 6)
+  averageBuyPrice  Decimal   @db.Decimal(18, 4) @map("average_buy_price")
+  currentPrice     Decimal?  @db.Decimal(18, 4) @map("current_price")
+  currency         String    @default("RUB")
+  expectedDividends Decimal? @db.Decimal(18, 2) @map("expected_dividends")
+  comment          String?
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  portfolio Portfolio  @relation(fields: [portfolioId], references: [id], onDelete: Cascade)
+  user      User?      @relation(fields: [userId], references: [id])
+  dividends Dividend[]
+
+  @@index([portfolioId])
+  @@map("investments")
+}
+
+model Dividend {
+  id           String         @id @default(uuid())
+  portfolioId  String         @map("portfolio_id")
+  investmentId String?        @map("investment_id")
+  userId       String?        @map("user_id")
+  amount       Decimal        @db.Decimal(18, 2)
+  currency     String         @default("RUB")
+  expectedDate DateTime?      @map("expected_date")
+  receivedDate DateTime?      @map("received_date")
+  status       DividendStatus @default(EXPECTED)
+  createdAt    DateTime       @default(now()) @map("created_at")
+
+  portfolio  Portfolio   @relation(fields: [portfolioId], references: [id], onDelete: Cascade)
+  investment Investment? @relation(fields: [investmentId], references: [id], onDelete: SetNull)
+  user       User?       @relation(fields: [userId], references: [id])
+
+  @@index([portfolioId])
+  @@map("dividends")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Budgets & limits (§16)
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Budget {
+  id           String      @id @default(uuid())
+  portfolioId  String      @map("portfolio_id")
+  scope        BudgetScope
+  categoryId   String?     @map("category_id")
+  userId       String?     @map("user_id")
+  limitAmount  Decimal     @db.Decimal(18, 2) @map("limit_amount")
+  currency     String      @default("RUB")
+  warnPercent  Int         @default(80) @map("warn_percent") // уведомить при достижении %
+  createdAt    DateTime    @default(now()) @map("created_at")
+
+  portfolio Portfolio @relation(fields: [portfolioId], references: [id], onDelete: Cascade)
+  user      User?     @relation(fields: [userId], references: [id])
+
+  @@index([portfolioId])
+  @@map("budgets")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AI recognition logs (§18.12, §11)
+// ─────────────────────────────────────────────────────────────────────────────
+
+model AiRecognitionLog {
+  id               String   @id @default(uuid())
+  userId           String?  @map("user_id")
+  portfolioId      String?  @map("portfolio_id")
+  source           ExpenseSource @default(TELEGRAM_BOT)
+  originalFileUrl  String?  @map("original_file_url")
+  extractedText    String?  @map("extracted_text")
+  parsedAmount     Decimal? @db.Decimal(18, 2) @map("parsed_amount")
+  parsedDate       DateTime? @map("parsed_date")
+  parsedMerchant   String?  @map("parsed_merchant")
+  parsedCategoryId String?  @map("parsed_category_id")
+  confidence       Int?
+  status           AiStatus @default(PENDING)
+  errorMessage     String?  @map("error_message")
+  createdExpenseId String?  @map("created_expense_id")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@map("ai_recognition_logs")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Audit log — история изменений (§27 "хранить историю изменений")
+// ─────────────────────────────────────────────────────────────────────────────
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  userId     String?  @map("user_id")
+  entity     String // "expense" | "income" | ...
+  entityId   String   @map("entity_id")
+  action     String // "create" | "update" | "delete" | "confirm"
+  changes    Json?
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@index([entity, entityId])
+  @@map("audit_logs")
+}
