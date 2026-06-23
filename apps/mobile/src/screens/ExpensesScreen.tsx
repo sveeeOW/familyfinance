@@ -1,7 +1,8 @@
 import React, { useCallback, useMemo, useState } from 'react';
-import { FlatList, Pressable, Text, View } from 'react-native';
+import { Alert, FlatList, Pressable, Text, View } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { api } from '../api/endpoints';
+import { request } from '../api/client';
 import { Expense } from '../api/types';
 import { usePortfolios } from '../store/portfolio';
 import { Card, IconBubble, ScreenTitle, SegmentedControl, appFont } from '../components/ui';
@@ -27,6 +28,7 @@ export default function ExpensesScreen({ navigation }: any) {
   const [items, setItems] = useState<Expense[]>([]);
   const [periodMode, setPeriodMode] = useState<'MONTH' | 'YEAR'>('MONTH');
   const [portfolioMode, setPortfolioMode] = useState<'SHARED' | 'PERSONAL'>('SHARED');
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!selectedId) return;
@@ -66,6 +68,27 @@ export default function ExpensesScreen({ navigation }: any) {
     }), 0),
     [filteredItems, start, end],
   );
+
+  const deleteExpense = useCallback((item: Expense) => {
+    Alert.alert('Удалить расход?', 'Запись будет удалена из списка и статистики.', [
+      { text: 'Отмена', style: 'cancel' },
+      {
+        text: 'Удалить',
+        style: 'destructive',
+        onPress: async () => {
+          setDeletingId(item.id);
+          try {
+            await request(`/expenses/${item.id}`, { method: 'DELETE' });
+            setItems((current) => current.filter((expense) => expense.id !== item.id));
+          } catch (e: any) {
+            Alert.alert('Ошибка', e.message ?? 'Не удалось удалить расход');
+          } finally {
+            setDeletingId(null);
+          }
+        },
+      },
+    ]);
+  }, []);
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg, padding: spacing(2.5) }}>
@@ -131,8 +154,9 @@ export default function ExpensesScreen({ navigation }: any) {
             rangeEnd: end,
           });
           const periodAmount = Number(item.amount) * occurrenceCount;
+          const isDeleting = deletingId === item.id;
           return (
-            <Card style={{ marginBottom: spacing(1.25) }}>
+            <Card style={{ marginBottom: spacing(1.25), opacity: isDeleting ? 0.55 : 1 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing(1.5) }}>
                 <IconBubble name="expense" color={colors.expense} bg={colors.redSoft} />
                 <View style={{ flex: 1 }}>
@@ -153,9 +177,19 @@ export default function ExpensesScreen({ navigation }: any) {
               <View style={{ flexDirection: 'row', gap: spacing(1), marginTop: spacing(1.5) }}>
                 <Pressable
                   onPress={() => navigation.navigate('AddExpense', { expense: item })}
+                  disabled={isDeleting}
                   style={{ flex: 1, paddingVertical: spacing(1), borderRadius: radius.pill, alignItems: 'center', backgroundColor: colors.primarySoft }}
                 >
                   <Text style={{ color: colors.primary, fontFamily: appFont, fontWeight: '500' }}>Изменить</Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => deleteExpense(item)}
+                  disabled={isDeleting}
+                  style={{ flex: 1, paddingVertical: spacing(1), borderRadius: radius.pill, alignItems: 'center', backgroundColor: colors.redSoft }}
+                >
+                  <Text style={{ color: colors.expense, fontFamily: appFont, fontWeight: '500' }}>
+                    {isDeleting ? 'Удаляю…' : 'Удалить'}
+                  </Text>
                 </Pressable>
               </View>
             </Card>
