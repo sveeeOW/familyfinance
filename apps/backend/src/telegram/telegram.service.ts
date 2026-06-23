@@ -10,10 +10,6 @@ interface SessionState {
   awaitingClarification?: boolean;
 }
 
-/**
- * Telegram-бот (§10). Запускается только если задан TELEGRAM_BOT_TOKEN.
- * В dev — long polling; если задан TELEGRAM_WEBHOOK_DOMAIN — webhook.
- */
 @Injectable()
 export class TelegramService implements OnModuleInit, OnApplicationShutdown {
   private readonly logger = new Logger(TelegramService.name);
@@ -52,13 +48,11 @@ export class TelegramService implements OnModuleInit, OnApplicationShutdown {
     this.bot?.stop();
   }
 
-  /** Обработка обновления из webhook (POST /telegram/webhook). */
   async handleUpdate(update: unknown) {
     if (!this.bot) return;
     await this.bot.handleUpdate(update as any);
   }
 
-  /** Отправка произвольного сообщения пользователю (для уведомлений, §15). */
   async sendMessage(telegramId: string, text: string) {
     if (!this.bot) {
       this.logger.warn(`Бот выключен, уведомление не отправлено: ${text}`);
@@ -71,7 +65,6 @@ export class TelegramService implements OnModuleInit, OnApplicationShutdown {
     }
   }
 
-  // ─── Регистрация обработчиков ─────────────────────────────────────────────
   private registerHandlers() {
     const bot = this.bot!;
 
@@ -81,7 +74,7 @@ export class TelegramService implements OnModuleInit, OnApplicationShutdown {
       if (payload) {
         const res = await this.links.linkByCode(payload, tgId);
         if (res.ok) {
-          await ctx.reply('✅ Аккаунт привязан! Теперь присылайте мне скриншоты чеков или пишите о тратах текстом.');
+          await ctx.reply('✅ Аккаунт привязан! Теперь присылайте мне скриншоты чеков, PDF-выписки или пишите о тратах текстом.');
         } else {
           await ctx.reply(`❌ ${res.reason}. Сгенерируйте новый код в приложении (Настройки → Telegram-бот).`);
         }
@@ -89,20 +82,20 @@ export class TelegramService implements OnModuleInit, OnApplicationShutdown {
       }
       const user = await this.userByTelegram(tgId);
       if (user) {
-        await ctx.reply('Привет! Пришлите скриншот чека/уведомления или напишите трату текстом, например: «Потратил 2500 на продукты в Перекрёстке».');
+        await ctx.reply('Привет! Пришлите скриншот чека, PDF-выписку или напишите трату текстом, например: «22628 кредит авто».');
       } else {
         await ctx.reply('Чтобы начать, привяжите аккаунт: откройте приложение → Настройки → «Подключить Telegram-бота» и перейдите по ссылке.');
       }
     });
 
     bot.help((ctx) =>
-      ctx.reply('Я добавляю расходы в Family Finance.\n• Пришлите скриншот чека — распознаю сумму и категорию.\n• Или напишите: «1200 такси».\n• Подтвердите кнопкой — расход появится в приложении.'),
+      ctx.reply('Я добавляю расходы в Family Finance.\n• Пришлите скриншот чека — распознаю сумму и категорию.\n• Пришлите PDF-выписку — найду расходы.\n• Или напишите: «1200 такси».\n• Подтвердите кнопкой — расход появится в приложении.'),
     );
 
     bot.on('photo', async (ctx) => this.onPhoto(ctx));
+    bot.on('document', async (ctx) => this.onDocument(ctx));
     bot.on('text', async (ctx) => this.onText(ctx));
 
-    // Inline-кнопки. Важно быстро отвечать на callback, иначе Telegram показывает вечную загрузку.
     bot.action(/^confirm:(.+)$/, async (ctx) => this.onConfirm(ctx, ctx.match[1]));
     bot.action(/^force:(.+)$/, async (ctx) => this.onConfirm(ctx, ctx.match[1], true));
     bot.action(/^cancel:(.+)$/, async (ctx) => {
@@ -116,7 +109,6 @@ export class TelegramService implements OnModuleInit, OnApplicationShutdown {
     bot.action(/^setport:([^:]+):(.+)$/, async (ctx) => this.onSetPortfolio(ctx, ctx.match[1], ctx.match[2]));
   }
 
-  // ─── Входящие сообщения ───────────────────────────────────────────────────
   private async onText(ctx: any) {
     const tgId = String(ctx.from.id);
     const user = await this.userByTelegram(tgId);
@@ -154,11 +146,8 @@ export class TelegramService implements OnModuleInit, OnApplicationShutdown {
     await ctx.reply('🔎 Распознаю чек…');
     try {
       const photos = ctx.message.photo;
-      const fileId = photos[photos.length - 1].file_id; // максимальное разрешение
-      const link = await ctx.telegram.getFileLink(fileId);
-      const resp = await fetch(link.href);
-      const buffer = Buffer.from(await resp.arrayBuffer());
-
+      const fileId = photos[photos.length - 1].file_id;
+      const buffer = await this.downloadTelegramFile(ctx, fileId);
       const draft = await this.ai.recognizeImage({
         buffer,
         mimeType: 'image/jpeg',
@@ -172,14 +161,59 @@ export class TelegramService implements OnModuleInit, OnApplicationShutdown {
     }
   }
 
-  // ─── Показ распознанного расхода (§10.4 / §10.5 / §28) ────────────────────
+  private async onDocument(ctx: any) {
+    const tgId = String(ctx.from.id);
+    const user = await this.userByTelegram(tgId);
+    if (!user) {
+      await ctx.reply('Сначала привяжите аккаунт через приложение (Настройки → Telegram-бот).');
+      return;
+    }
+
+    const doc = ctx.message.document;
+    const filename = doc.file_name ?? 'statement.pdf';
+    const mimeType = doc.mime_type ?? '';
+    const isPdf = mimeType.includes('pdf') || filename.toLowerCase().endsWith('.pdf');
+    if (!isPdf) {
+      await ctx.reply('Пока я умею читать только PDF-выписки. Пришлите PDF-файл или фото чека.');
+      return;
+    }
+
+    const portfolioId = await this.defaultPortfolioId(user.id);
+    if (!portfolioId) {
+      await ctx.reply('У вас нет доступных портфелей. Создайте портфель в приложении.');
+      return;
+    }
+
+    await ctx.reply('📄 Читаю PDF-выписку. Это может занять до минуты…');
+    try {
+      const buffer = await this.downloadTelegramFile(ctx, doc.file_id);
+      const drafts = await this.ai.recognizePdfStatement({
+        buffer,
+        filename,
+        userId: user.id,
+        portfolioId,
+      });
+
+      if (!drafts.length) {
+        await ctx.reply('Не нашёл явных расходов в PDF. Возможно, выписка защищена, отсканирована картинкой или в ней нет операций списания.');
+        return;
+      }
+
+      await ctx.reply(`Нашёл операций: ${drafts.length}. Отправляю их на подтверждение по одной.`);
+      for (const draft of drafts) {
+        await this.presentDraft(ctx, user.id, draft);
+      }
+    } catch (e) {
+      this.logger.error(`Ошибка разбора PDF: ${(e as Error).message}`, (e as Error).stack);
+      await ctx.reply(`Не удалось прочитать PDF: ${(e as Error).message}`);
+    }
+  }
+
   private async presentDraft(ctx: any, userId: string, draft: RecognitionDraft) {
     const tgId = String(ctx.from.id);
     this.sessions.set(tgId, { draft });
 
     const p = draft.parsed;
-
-    // §10.5 — непонятный расход
     if (draft.status === ExpenseStatus.NEEDS_CLARIFICATION && !p.amount) {
       await ctx.reply(p.clarificationQuestion ?? 'Не смог распознать сумму. Опишите трату: например «1500 продукты».');
       return;
@@ -309,7 +343,13 @@ export class TelegramService implements OnModuleInit, OnApplicationShutdown {
     }
   }
 
-  // ─── Helpers ──────────────────────────────────────────────────────────────
+  private async downloadTelegramFile(ctx: any, fileId: string): Promise<Buffer> {
+    const link = await ctx.telegram.getFileLink(fileId);
+    const resp = await fetch(link.href);
+    if (!resp.ok) throw new Error(`Не удалось скачать файл Telegram: ${resp.status}`);
+    return Buffer.from(await resp.arrayBuffer());
+  }
+
   private async safeAnswer(ctx: any, text?: string) {
     try {
       await ctx.answerCbQuery(text);
