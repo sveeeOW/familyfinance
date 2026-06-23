@@ -58,7 +58,7 @@ export function countOccurrences(params: {
   if (Number.isNaN(startDate.getTime())) return 0;
 
   const hasCustomMarker = Boolean(parseCustomPeriod(marker));
-  const effectiveRecurrence = hasCustomMarker && (!recurrence || recurrence === 'ONE_TIME') ? 'CUSTOM' : recurrence ?? 'ONE_TIME';
+  const effectiveRecurrence = hasCustomMarker && (!recurrence || recurrence === 'ONE_TIME') ? 'CUSTOM' : recurrence ?? 'MONTHLY';
 
   if (effectiveRecurrence === 'ONE_TIME') {
     return startDate >= rangeStart && startDate < rangeEnd ? 1 : 0;
