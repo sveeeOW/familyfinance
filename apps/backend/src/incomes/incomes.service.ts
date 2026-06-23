@@ -66,7 +66,18 @@ export class IncomesService {
     await this.access.requireMember(portfolioId, userId);
     const incomes = await this.prisma.income.findMany({ where: { portfolioId } });
 
-    const monthlyEquivalent = (amount: number, recurrence: Recurrence): number => {
+    const customMonthlyEquivalent = (amount: number, description?: string | null): number => {
+      const match = description?.match(/\[period:(\d+):(DAY|WEEK|MONTH)\]/);
+      if (!match) return 0;
+      const interval = Number(match[1]);
+      const unit = match[2];
+      if (!interval || interval <= 0) return 0;
+      if (unit === 'DAY') return amount * (30 / interval);
+      if (unit === 'WEEK') return amount * (52 / 12 / interval);
+      return amount * (1 / interval);
+    };
+
+    const monthlyEquivalent = (amount: number, recurrence: Recurrence, description?: string | null): number => {
       switch (recurrence) {
         case Recurrence.MONTHLY:
           return amount;
@@ -74,13 +85,15 @@ export class IncomesService {
           return amount * 2;
         case Recurrence.WEEKLY:
           return amount * 4.33;
+        case Recurrence.CUSTOM:
+          return customMonthlyEquivalent(amount, description);
         default:
-          return 0; // ONE_TIME / CUSTOM не проецируем
+          return 0; // ONE_TIME не проецируем
       }
     };
 
     const recurringPerMonth = incomes.reduce(
-      (sum, i) => sum + monthlyEquivalent(Number(i.amount), i.recurrence),
+      (sum, i) => sum + monthlyEquivalent(Number(i.amount), i.recurrence, i.description),
       0,
     );
 
