@@ -25,6 +25,7 @@ const PERIODS = [
   { key: 'TWO_WEEKS', label: 'Каждые 2 недели', recurrence: 'CUSTOM', interval: 2, unit: 'WEEK' },
   { key: 'THREE_WEEKS', label: 'Каждые 3 недели', recurrence: 'CUSTOM', interval: 3, unit: 'WEEK' },
   { key: 'MONTHLY', label: 'Каждый месяц', recurrence: 'MONTHLY' },
+  { key: 'THREE_MONTHS', label: 'Каждые 3 месяца', recurrence: 'CUSTOM', interval: 3, unit: 'MONTH' },
   { key: 'FOUR_MONTHS', label: 'Каждые 4 месяца', recurrence: 'CUSTOM', interval: 4, unit: 'MONTH' },
   { key: 'SIX_MONTHS', label: 'Полгода', recurrence: 'CUSTOM', interval: 6, unit: 'MONTH' },
   { key: 'CUSTOM', label: 'Свой период', recurrence: 'CUSTOM' },
@@ -65,6 +66,7 @@ function periodKeyFromIncome(income: any) {
   const custom = getCustom(income.description);
   if (custom?.unit === 'WEEK' && custom.interval === 2) return 'TWO_WEEKS';
   if (custom?.unit === 'WEEK' && custom.interval === 3) return 'THREE_WEEKS';
+  if (custom?.unit === 'MONTH' && custom.interval === 3) return 'THREE_MONTHS';
   if (custom?.unit === 'MONTH' && custom.interval === 4) return 'FOUR_MONTHS';
   if (custom?.unit === 'MONTH' && custom.interval === 6) return 'SIX_MONTHS';
   return 'CUSTOM';
