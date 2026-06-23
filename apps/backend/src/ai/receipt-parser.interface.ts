@@ -28,9 +28,17 @@ export interface ParseTextInput {
   previousMerchantCategories?: { merchant: string; category: string }[];
 }
 
+export interface ParsePdfInput {
+  fileBase64: string;
+  filename: string;
+  availableCategories: string[];
+  previousMerchantCategories?: { merchant: string; category: string }[];
+}
+
 export const RECEIPT_PARSER = Symbol('RECEIPT_PARSER');
 
 export interface ReceiptParser {
   parseImage(input: ParseImageInput): Promise<ParsedReceipt>;
   parseText(input: ParseTextInput): Promise<ParsedReceipt>;
+  parsePdfStatement?(input: ParsePdfInput): Promise<ParsedReceipt[]>;
 }
