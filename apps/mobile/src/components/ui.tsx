@@ -1,6 +1,7 @@
 import React from 'react';
 import {
   ActivityIndicator,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -11,6 +12,11 @@ import {
 } from 'react-native';
 import { colors, radius, shadows, spacing } from '../theme';
 import { Icon } from './icons';
+
+export const appFont = Platform.select({
+  web: 'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+  default: undefined,
+});
 
 export function Card({ style, children, ...rest }: ViewProps) {
   return (
@@ -65,7 +71,7 @@ export function Button({
         <ActivityIndicator color={iconColor} />
       ) : (
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing(0.75) }}>
-          {icon ? <Icon name={icon} size={18} color={iconColor} strokeWidth={2.4} /> : null}
+          {icon ? <Icon name={icon} size={18} color={iconColor} strokeWidth={2.2} /> : null}
           <Text style={[styles.buttonText, isGhost && { color: colors.primary }, isYellow && { color: colors.accentText }]}>
             {title}
           </Text>
@@ -104,7 +110,7 @@ export function Money({
   const color = tone === 'income' ? colors.income : tone === 'expense' ? colors.expense : colors.text;
   const sign = tone === 'income' ? '+' : tone === 'expense' ? '−' : '';
   return (
-    <Text style={{ color, fontWeight: '900', fontSize: size, letterSpacing: -0.45 }}>
+    <Text style={{ color, fontFamily: appFont, fontWeight: '700', fontSize: size, letterSpacing: -0.35 }}>
       {sign}
       {new Intl.NumberFormat('ru-RU').format(Math.abs(value))} {currency}
     </Text>
@@ -133,7 +139,7 @@ export function IconBubble({
 }) {
   return (
     <View style={{ width: size, height: size, borderRadius: radius.pill, backgroundColor: bg, alignItems: 'center', justifyContent: 'center' }}>
-      <Icon name={name} size={Math.round(size * 0.52)} color={color} />
+      <Icon name={name} size={Math.round(size * 0.52)} color={color} strokeWidth={2.1} />
     </View>
   );
 }
@@ -183,6 +189,33 @@ export function Pill({ label, active }: { label: string; active?: boolean }) {
   );
 }
 
+export function SegmentedControl<T extends string>({
+  value,
+  options,
+  onChange,
+}: {
+  value: T;
+  options: { label: string; value: T }[];
+  onChange: (value: T) => void;
+}) {
+  return (
+    <View style={styles.segmented}>
+      {options.map((option) => {
+        const active = value === option.value;
+        return (
+          <Pressable
+            key={option.value}
+            onPress={() => onChange(option.value)}
+            style={({ pressed }) => [styles.segment, active && styles.segmentActive, pressed && { opacity: 0.88 }]}
+          >
+            <Text style={[styles.segmentText, active && styles.segmentTextActive]}>{option.label}</Text>
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   card: {
     backgroundColor: colors.card,
@@ -201,19 +234,19 @@ const styles = StyleSheet.create({
   },
   button: {
     backgroundColor: colors.primary,
-    paddingVertical: spacing(1.55),
+    paddingVertical: spacing(1.45),
     paddingHorizontal: spacing(2),
     borderRadius: radius.pill,
     alignItems: 'center',
     justifyContent: 'center',
-    minHeight: 50,
+    minHeight: 48,
     ...shadows.floating,
   },
   buttonGhost: { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, shadowOpacity: 0, elevation: 0 },
   buttonDanger: { backgroundColor: colors.expense, shadowColor: colors.expense },
   buttonYellow: { backgroundColor: colors.accent, shadowColor: colors.warning },
-  buttonText: { color: colors.primaryText, fontWeight: '900', fontSize: 15, letterSpacing: -0.2 },
-  label: { color: colors.textMuted, marginBottom: 7, fontSize: 13, fontWeight: '800' },
+  buttonText: { color: colors.primaryText, fontFamily: appFont, fontWeight: '650' as any, fontSize: 15, letterSpacing: -0.1 },
+  label: { color: colors.textMuted, marginBottom: 7, fontSize: 13, fontFamily: appFont, fontWeight: '600' },
   input: {
     backgroundColor: colors.surface,
     borderRadius: radius.lg,
@@ -223,13 +256,14 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
     fontSize: 15,
-    fontWeight: '600',
+    fontFamily: appFont,
+    fontWeight: '400',
   },
-  title: { color: colors.text, fontSize: 34, fontWeight: '900', letterSpacing: -1.15 },
-  subtitle: { color: colors.textMuted, fontSize: 14, marginTop: 4, fontWeight: '600' },
-  metricLabel: { color: colors.textMuted, fontSize: 12, fontWeight: '800', marginTop: spacing(1.4), marginBottom: spacing(0.7) },
-  sectionTitle: { color: colors.text, fontSize: 20, fontWeight: '900', letterSpacing: -0.45 },
-  sectionSubtitle: { color: colors.textMuted, fontSize: 13, marginTop: 3, fontWeight: '600' },
+  title: { color: colors.text, fontFamily: appFont, fontSize: 33, fontWeight: '700', letterSpacing: -1.05 },
+  subtitle: { color: colors.textMuted, fontFamily: appFont, fontSize: 14, marginTop: 4, fontWeight: '400' },
+  metricLabel: { color: colors.textMuted, fontFamily: appFont, fontSize: 12, fontWeight: '500', marginTop: spacing(1.4), marginBottom: spacing(0.7) },
+  sectionTitle: { color: colors.text, fontFamily: appFont, fontSize: 20, fontWeight: '650' as any, letterSpacing: -0.35 },
+  sectionSubtitle: { color: colors.textMuted, fontFamily: appFont, fontSize: 13, marginTop: 3, fontWeight: '400' },
   pill: {
     backgroundColor: colors.card,
     paddingHorizontal: spacing(1.6),
@@ -239,6 +273,30 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
   },
   pillActive: { backgroundColor: colors.primary, borderColor: colors.primary },
-  pillText: { color: colors.textMuted, fontWeight: '900', fontSize: 13 },
+  pillText: { color: colors.textMuted, fontFamily: appFont, fontWeight: '500', fontSize: 13 },
   pillTextActive: { color: colors.primaryText },
+  segmented: {
+    flexDirection: 'row',
+    backgroundColor: colors.cardAlt,
+    borderRadius: radius.pill,
+    padding: 4,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  segment: {
+    flex: 1,
+    minHeight: 36,
+    borderRadius: radius.pill,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: spacing(1),
+  },
+  segmentActive: {
+    backgroundColor: colors.card,
+    ...shadows.card,
+    shadowOpacity: 0.08,
+    elevation: 1,
+  },
+  segmentText: { color: colors.textMuted, fontFamily: appFont, fontWeight: '500', fontSize: 13 },
+  segmentTextActive: { color: colors.text, fontWeight: '650' as any },
 });
