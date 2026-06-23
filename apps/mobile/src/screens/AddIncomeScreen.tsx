@@ -101,6 +101,7 @@ export default function AddIncomeScreen({ navigation, route }: any) {
   const [amount, setAmount] = useState(income ? String(Number(income.amount)) : '');
   const [type, setType] = useState(income?.type ?? 'SALARY');
   const [period, setPeriod] = useState(periodKeyFromIncome(income));
+  const [nearestPayout, setNearestPayout] = useState(income?.date ? new Date(income.date).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10));
   const [paymentDay, setPaymentDay] = useState(income?.paymentDay ? String(income.paymentDay) : '');
   const [customInterval, setCustomInterval] = useState(savedCustom?.interval ? String(savedCustom.interval) : '2');
   const [customUnit, setCustomUnit] = useState(savedCustom?.unit ?? 'WEEK');
@@ -114,6 +115,10 @@ export default function AddIncomeScreen({ navigation, route }: any) {
       setError('Введите сумму');
       return;
     }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(nearestPayout)) {
+      setError('Укажите ближайшую выплату в формате YYYY-MM-DD');
+      return;
+    }
     const periodData = periodPayload(period, customInterval, customUnit);
     if ('error' in periodData) {
       setError(periodData.error);
@@ -125,9 +130,9 @@ export default function AddIncomeScreen({ navigation, route }: any) {
       const body = {
         type,
         amount: value,
-        date: income?.date ? new Date(income.date).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10),
+        date: nearestPayout,
         recurrence: periodData.recurrence,
-        paymentDay: paymentDay ? Number(paymentDay) : undefined,
+        paymentDay: paymentDay ? Number(paymentDay) : Number(nearestPayout.slice(8, 10)),
         description: periodData.description,
       };
 
@@ -170,6 +175,7 @@ export default function AddIncomeScreen({ navigation, route }: any) {
     <ScrollView style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ padding: spacing(2.5) }}>
       <ScreenTitle>{isEditing ? 'Редактировать доход' : 'Новый доход'}</ScreenTitle>
       <Field label="Сумма, ₽" keyboardType="decimal-pad" value={amount} onChangeText={setAmount} placeholder="225000" />
+      <Field label="Ближайшая выплата" value={nearestPayout} onChangeText={setNearestPayout} placeholder="2026-07-05" />
 
       <Text style={label}>Тип дохода</Text>
       <Chips options={INCOME_TYPES} value={type} onChange={setType} />
@@ -191,10 +197,14 @@ export default function AddIncomeScreen({ navigation, route }: any) {
             keyboardType="numeric"
             value={paymentDay}
             onChangeText={setPaymentDay}
-            placeholder="5"
+            placeholder={nearestPayout.slice(8, 10)}
           />
         </View>
       ) : null}
+
+      <Text style={{ color: colors.textMuted, fontSize: 12, marginTop: spacing(1) }}>
+        Ближайшая выплата — это старт расписания. Для регулярных доходов приложение будет учитывать следующие выплаты автоматически в будущих месяцах.
+      </Text>
 
       {error ? <Text style={{ color: colors.expense, marginVertical: spacing(1) }}>{error}</Text> : null}
       <View style={{ marginTop: spacing(2), gap: spacing(1) }}>
