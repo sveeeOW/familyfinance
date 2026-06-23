@@ -58,65 +58,95 @@ export class IncomesService {
     return { success: true };
   }
 
+  private parseCustomPeriod(text?: string | null): { interval: number; unit: 'DAY' | 'WEEK' | 'MONTH' } | null {
+    const tag = text?.split('[period:')[1]?.split(']')[0];
+    if (!tag) return null;
+    const [rawInterval, rawUnit] = tag.split(':');
+    const interval = Number(rawInterval);
+    if (!Number.isInteger(interval) || interval <= 0) return null;
+    if (rawUnit !== 'DAY' && rawUnit !== 'WEEK' && rawUnit !== 'MONTH') return null;
+    return { interval, unit: rawUnit };
+  }
+
+  private addPeriod(date: Date, recurrence: Recurrence, text?: string | null): Date {
+    const next = new Date(date);
+    if (recurrence === Recurrence.WEEKLY) {
+      next.setDate(next.getDate() + 7);
+      return next;
+    }
+    if (recurrence === Recurrence.TWICE_A_MONTH) {
+      next.setDate(next.getDate() + 14);
+      return next;
+    }
+    if (recurrence === Recurrence.CUSTOM) {
+      const custom = this.parseCustomPeriod(text);
+      if (!custom) {
+        next.setMonth(next.getMonth() + 1);
+        return next;
+      }
+      if (custom.unit === 'DAY') next.setDate(next.getDate() + custom.interval);
+      if (custom.unit === 'WEEK') next.setDate(next.getDate() + custom.interval * 7);
+      if (custom.unit === 'MONTH') next.setMonth(next.getMonth() + custom.interval);
+      return next;
+    }
+    next.setMonth(next.getMonth() + 1);
+    return next;
+  }
+
+  private countOccurrences(params: {
+    startDate: Date;
+    recurrence: Recurrence;
+    rangeStart: Date;
+    rangeEnd: Date;
+    text?: string | null;
+  }) {
+    const { recurrence, rangeStart, rangeEnd, text } = params;
+    let current = new Date(params.startDate);
+    if (recurrence === Recurrence.ONE_TIME) {
+      return current >= rangeStart && current < rangeEnd ? 1 : 0;
+    }
+    let guard = 0;
+    while (current < rangeStart && guard < 600) {
+      current = this.addPeriod(current, recurrence, text);
+      guard += 1;
+    }
+    let count = 0;
+    while (current < rangeEnd && guard < 700) {
+      if (current >= rangeStart) count += 1;
+      current = this.addPeriod(current, recurrence, text);
+      guard += 1;
+    }
+    return count;
+  }
+
   /**
-   * Прогноз дохода (§7.3). Складывает регулярные доходы по месяцам на N месяцев вперёд
-   * с учётом периодичности. Разовые доходы не проецируются.
+   * Прогноз дохода: регулярные доходы считаются от даты ближайшей выплаты.
+   * Это позволяет один раз внести зарплату/аванс/дивиденды и видеть их в будущих месяцах.
    */
   async forecast(portfolioId: string, userId: string, months = 6) {
     await this.access.requireMember(portfolioId, userId);
     const incomes = await this.prisma.income.findMany({ where: { portfolioId } });
 
-    const customMonthlyEquivalent = (amount: number, description?: string | null): number => {
-      const match = description?.match(/\[period:(\d+):(DAY|WEEK|MONTH)\]/);
-      if (!match) return 0;
-      const interval = Number(match[1]);
-      const unit = match[2];
-      if (!interval || interval <= 0) return 0;
-      if (unit === 'DAY') return amount * (30 / interval);
-      if (unit === 'WEEK') return amount * (52 / 12 / interval);
-      return amount * (1 / interval);
-    };
-
-    const monthlyEquivalent = (amount: number, recurrence: Recurrence, description?: string | null): number => {
-      switch (recurrence) {
-        case Recurrence.MONTHLY:
-          return amount;
-        case Recurrence.TWICE_A_MONTH:
-          return amount * 2;
-        case Recurrence.WEEKLY:
-          return amount * 4.33;
-        case Recurrence.CUSTOM:
-          return customMonthlyEquivalent(amount, description);
-        default:
-          return 0; // ONE_TIME не проецируем
-      }
-    };
-
-    const recurringPerMonth = incomes.reduce(
-      (sum, i) => sum + monthlyEquivalent(Number(i.amount), i.recurrence, i.description),
-      0,
-    );
-
     const now = new Date();
     const periods: { month: string; expected: number }[] = [];
     for (let i = 0; i < months; i++) {
-      const d = new Date(now.getFullYear(), now.getMonth() + i, 1);
-      const monthKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-      // К первому (текущему) месяцу добавляем уже учтённые разовые доходы этого месяца.
-      const oneTimeThisMonth =
-        i === 0
-          ? incomes
-              .filter(
-                (inc) =>
-                  inc.recurrence === Recurrence.ONE_TIME &&
-                  inc.date.getFullYear() === d.getFullYear() &&
-                  inc.date.getMonth() === d.getMonth(),
-              )
-              .reduce((s, inc) => s + Number(inc.amount), 0)
-          : 0;
-      periods.push({ month: monthKey, expected: Math.round(recurringPerMonth + oneTimeThisMonth) });
+      const start = new Date(now.getFullYear(), now.getMonth() + i, 1);
+      const end = new Date(start.getFullYear(), start.getMonth() + 1, 1);
+      const monthKey = `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, '0')}`;
+      const expected = incomes.reduce((sum, income) => {
+        const count = this.countOccurrences({
+          startDate: income.date,
+          recurrence: income.recurrence,
+          rangeStart: start,
+          rangeEnd: end,
+          text: income.description,
+        });
+        return sum + Number(income.amount) * count;
+      }, 0);
+      periods.push({ month: monthKey, expected: Math.round(expected) });
     }
 
+    const recurringPerMonth = periods.length ? periods.reduce((s, p) => s + p.expected, 0) / periods.length : 0;
     return { recurringPerMonth: Math.round(recurringPerMonth), months: periods };
   }
 }
