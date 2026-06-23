@@ -4,7 +4,7 @@ import { NavigationContainer, DefaultTheme } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { useAuth } from '../store/auth';
-import { colors } from '../theme';
+import { colors, radius, spacing } from '../theme';
 
 import LoginScreen from '../screens/LoginScreen';
 import RegisterScreen from '../screens/RegisterScreen';
@@ -39,11 +39,11 @@ const navTheme = {
 };
 
 const TAB_ICON: Record<string, string> = {
-  Главная: '🏠',
-  Расходы: '💸',
-  Доходы: '💰',
-  Портфели: '📁',
-  Аналитика: '📊',
+  Главная: '⌁',
+  Расходы: '−',
+  Доходы: '+',
+  Портфели: '□',
+  Аналитика: '◌',
 };
 
 function MainTabs() {
@@ -51,11 +51,23 @@ function MainTabs() {
     <Tab.Navigator
       screenOptions={({ route }) => ({
         headerShown: false,
-        tabBarStyle: { backgroundColor: colors.card, borderTopColor: colors.border },
+        tabBarStyle: {
+          backgroundColor: colors.card,
+          borderTopColor: colors.border,
+          height: 68,
+          paddingTop: spacing(0.75),
+          paddingBottom: spacing(1),
+          shadowColor: colors.shadow,
+          shadowOpacity: 0.15,
+          shadowRadius: 18,
+          shadowOffset: { width: 0, height: -8 },
+          elevation: 8,
+        },
+        tabBarLabelStyle: { fontWeight: '800', fontSize: 11 },
         tabBarActiveTintColor: colors.primary,
         tabBarInactiveTintColor: colors.textMuted,
         tabBarIcon: ({ color }) => (
-          <Text style={{ fontSize: 18, color }}>{TAB_ICON[route.name] ?? '•'}</Text>
+          <Text style={{ fontSize: 21, color, fontWeight: '900' }}>{TAB_ICON[route.name] ?? '•'}</Text>
         ),
       })}
     >
@@ -76,7 +88,9 @@ export default function RootNavigator() {
       <Stack.Navigator
         screenOptions={{
           headerStyle: { backgroundColor: colors.bg },
+          headerShadowVisible: false,
           headerTintColor: colors.text,
+          headerTitleStyle: { fontWeight: '900' },
           contentStyle: { backgroundColor: colors.bg },
         }}
       >
@@ -89,14 +103,27 @@ export default function RootNavigator() {
                 headerShown: true,
                 title: 'Family Finance',
                 headerRight: () => (
-                  <Pressable onPress={() => navigation.navigate('Settings')} hitSlop={12}>
-                    <Text style={{ fontSize: 20 }}>⚙️</Text>
+                  <Pressable
+                    onPress={() => navigation.navigate('Settings')}
+                    hitSlop={12}
+                    style={{
+                      width: 38,
+                      height: 38,
+                      borderRadius: radius.lg,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      backgroundColor: colors.card,
+                      borderWidth: 1,
+                      borderColor: colors.border,
+                    }}
+                  >
+                    <Text style={{ fontSize: 18 }}>⚙️</Text>
                   </Pressable>
                 ),
               })}
             />
             <Stack.Screen name="AddExpense" component={AddExpenseScreen} options={{ title: 'Новый расход' }} />
-            <Stack.Screen name="AddIncome" component={AddIncomeScreen} options={{ title: 'Новый доход' }} />
+            <Stack.Screen name="AddIncome" component={AddIncomeScreen} options={{ title: 'Доход' }} />
             <Stack.Screen name="ScanReceipt" component={ScanReceiptScreen} options={{ title: 'Сканировать чек' }} />
             <Stack.Screen name="Clarification" component={ClarificationScreen} options={{ title: 'Требует уточнения' }} />
             <Stack.Screen name="Credits" component={CreditsScreen} options={{ title: 'Кредиты' }} />
