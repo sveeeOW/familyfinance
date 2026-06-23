@@ -29,7 +29,6 @@ export class AiService {
     @Inject(RECEIPT_PARSER) private readonly parser: ReceiptParser,
   ) {}
 
-  // ─── Распознавание ────────────────────────────────────────────────────────
   async recognizeText(params: { text: string; userId: string; portfolioId: string }): Promise<RecognitionDraft> {
     const categories = await this.categoryNames(params.portfolioId);
     const history = await this.merchantHistory(params.userId, params.portfolioId);
@@ -49,10 +48,13 @@ export class AiService {
     source?: ExpenseSource;
   }): Promise<RecognitionDraft> {
     let screenshotUrl: string | null = null;
-    try {
-      screenshotUrl = await this.storage.save(params.buffer, this.extFromMime(params.mimeType));
-    } catch (error) {
-      this.logger.warn(`Скриншот не сохранён, продолжаю распознавание: ${(error as Error).message}`);
+
+    if (process.env.SAVE_RECOGNITION_FILES === 'true') {
+      try {
+        screenshotUrl = await this.storage.save(params.buffer, this.extFromMime(params.mimeType));
+      } catch (error) {
+        this.logger.warn(`Скриншот не сохранён, продолжаю распознавание: ${(error as Error).message}`);
+      }
     }
 
     const categories = await this.categoryNames(params.portfolioId);
@@ -71,15 +73,43 @@ export class AiService {
     });
   }
 
-  /**
-   * Постобработка: усиливаем категорию правилами (§9.3/§11.4), резолвим в id,
-   * определяем статус по confidence (§11.3), проверяем дубль (§28), пишем лог.
-   */
+  async recognizePdfStatement(params: {
+    buffer: Buffer;
+    filename: string;
+    userId: string;
+    portfolioId: string;
+  }): Promise<RecognitionDraft[]> {
+    if (!this.parser.parsePdfStatement) {
+      throw new Error('Текущий AI-провайдер не поддерживает PDF. Установите AI_PROVIDER=openai.');
+    }
+
+    const categories = await this.categoryNames(params.portfolioId);
+    const history = await this.merchantHistory(params.userId, params.portfolioId);
+    const parsed = await this.parser.parsePdfStatement({
+      fileBase64: params.buffer.toString('base64'),
+      filename: params.filename,
+      availableCategories: categories,
+      previousMerchantCategories: history,
+    });
+
+    const drafts: RecognitionDraft[] = [];
+    for (const operation of parsed.filter((item) => item.type !== 'income' && item.amount).slice(0, 20)) {
+      drafts.push(
+        await this.postProcess(operation, {
+          userId: params.userId,
+          portfolioId: params.portfolioId,
+          source: ExpenseSource.TELEGRAM_BOT,
+          fileUrl: null,
+        }),
+      );
+    }
+    return drafts;
+  }
+
   private async postProcess(
     parsed: ParsedReceipt,
     ctx: { userId: string; portfolioId: string; source: ExpenseSource; fileUrl: string | null },
   ): Promise<RecognitionDraft> {
-    // 1. Резолвим категорию: сначала имя из модели, затем rule-based по merchant/тексту.
     let resolvedCategoryId = await this.categoryIdByName(parsed.category, ctx.portfolioId);
     let resolvedCategoryName = parsed.category;
 
@@ -97,16 +127,12 @@ export class AiService {
       resolvedCategoryName = 'Другое';
     }
 
-    // Если категория уже сопоставлена с реальной категорией, не заставляем пользователя
-    // проходить лишнее уточнение только из-за осторожной оценки модели.
     if (parsed.amount && resolvedCategoryId && parsed.confidence >= 45) {
       parsed.needsClarification = false;
     }
 
-    // 2. Статус по уровню уверенности (§11.3).
     const status = this.statusFromConfidence(parsed);
 
-    // 3. Проверка дубля (§28).
     let duplicateOf: string | null = null;
     if (parsed.amount) {
       const dup = await this.expenses.findPotentialDuplicate({
@@ -119,7 +145,6 @@ export class AiService {
       duplicateOf = dup?.id ?? null;
     }
 
-    // 4. Лог распознавания (§18.12).
     const log = await this.prisma.aiRecognitionLog.create({
       data: {
         userId: ctx.userId,
@@ -148,7 +173,6 @@ export class AiService {
     };
   }
 
-  // ─── Создание расхода из распознанного черновика ──────────────────────────
   async confirmRecognition(params: {
     logId: string;
     userId: string;
@@ -189,7 +213,6 @@ export class AiService {
       data: { status: AiStatus.CONFIRMED, createdExpenseId: expense.id, parsedCategoryId: categoryId },
     });
 
-    // Обучаем правило на подтверждённой категории (§11.4).
     if (log.parsedMerchant && categoryId) {
       await this.categorization.learn({
         keyword: log.parsedMerchant,
@@ -202,7 +225,6 @@ export class AiService {
     return { expenseId: expense.id, expense };
   }
 
-  /** Явное обновление правила категоризации (POST /ai/update-category-rule). */
   async updateCategoryRule(params: {
     userId: string;
     portfolioId?: string;
@@ -218,7 +240,6 @@ export class AiService {
     return { success: true };
   }
 
-  // ─── Helpers ──────────────────────────────────────────────────────────────
   private statusFromConfidence(parsed: ParsedReceipt): ExpenseStatus {
     if (parsed.amount == null) return ExpenseStatus.NEEDS_CLARIFICATION;
     if (parsed.needsClarification || parsed.confidence < 45) return ExpenseStatus.NEEDS_CLARIFICATION;
