@@ -2,6 +2,27 @@ import { Controller, Get } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { PrismaService } from './prisma/prisma.service';
 
+function getSafeDatabaseInfo() {
+  const raw = process.env.DATABASE_URL;
+  if (!raw) return null;
+
+  try {
+    const url = new URL(raw);
+    return {
+      protocol: url.protocol.replace(':', ''),
+      host: url.hostname,
+      port: url.port || null,
+      database: url.pathname ? url.pathname.replace(/^\//, '') : null,
+      sslmode: url.searchParams.get('sslmode'),
+      isLocalhost: ['localhost', '127.0.0.1', '0.0.0.0'].includes(url.hostname),
+    };
+  } catch {
+    return {
+      parseError: true,
+    };
+  }
+}
+
 @ApiTags('health')
 @Controller('health')
 export class HealthController {
@@ -12,6 +33,7 @@ export class HealthController {
     let database = 'error';
     let databaseErrorCode: string | null = null;
     let databaseErrorName: string | null = null;
+    let databaseErrorMessage: string | null = null;
 
     try {
       await this.prisma.$queryRaw`SELECT 1`;
@@ -19,6 +41,7 @@ export class HealthController {
     } catch (error) {
       database = 'error';
       databaseErrorName = error instanceof Error ? error.name : 'UnknownError';
+      databaseErrorMessage = error instanceof Error ? error.message.split('\n')[0] : null;
 
       if (typeof error === 'object' && error !== null && 'code' in error) {
         databaseErrorCode = String((error as { code?: unknown }).code);
@@ -31,6 +54,8 @@ export class HealthController {
       database,
       databaseErrorName,
       databaseErrorCode,
+      databaseErrorMessage,
+      databaseUrl: getSafeDatabaseInfo(),
       env: {
         hasDatabaseUrl: Boolean(process.env.DATABASE_URL),
         hasJwtAccessSecret: Boolean(process.env.JWT_ACCESS_SECRET),
