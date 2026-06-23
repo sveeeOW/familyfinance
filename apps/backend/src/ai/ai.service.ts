@@ -48,7 +48,13 @@ export class AiService {
     portfolioId: string;
     source?: ExpenseSource;
   }): Promise<RecognitionDraft> {
-    const screenshotUrl = await this.storage.save(params.buffer, this.extFromMime(params.mimeType));
+    let screenshotUrl: string | null = null;
+    try {
+      screenshotUrl = await this.storage.save(params.buffer, this.extFromMime(params.mimeType));
+    } catch (error) {
+      this.logger.warn(`Скриншот не сохранён, продолжаю распознавание: ${(error as Error).message}`);
+    }
+
     const categories = await this.categoryNames(params.portfolioId);
     const history = await this.merchantHistory(params.userId, params.portfolioId);
     const parsed = await this.parser.parseImage({
@@ -89,6 +95,12 @@ export class AiService {
     if (!resolvedCategoryId) {
       resolvedCategoryId = await this.categorization.fallbackCategoryId();
       resolvedCategoryName = 'Другое';
+    }
+
+    // Если категория уже сопоставлена с реальной категорией, не заставляем пользователя
+    // проходить лишнее уточнение только из-за осторожной оценки модели.
+    if (parsed.amount && resolvedCategoryId && parsed.confidence >= 45) {
+      parsed.needsClarification = false;
     }
 
     // 2. Статус по уровню уверенности (§11.3).
@@ -153,11 +165,15 @@ export class AiService {
     const portfolioId = params.portfolioId ?? log.portfolioId!;
     const categoryId = params.categoryId ?? log.parsedCategoryId ?? undefined;
 
+    if (!log.parsedAmount || Number(log.parsedAmount) <= 0) {
+      throw new Error('Не удалось определить сумму расхода');
+    }
+
     const expense = await this.expenses.createFromRecognition({
       portfolioId,
       enteredByUserId: params.userId,
       paidByUserId: log.userId ?? params.userId,
-      amount: Number(log.parsedAmount ?? 0),
+      amount: Number(log.parsedAmount),
       date: log.parsedDate ?? new Date(),
       categoryId,
       merchant: log.parsedMerchant,
@@ -205,8 +221,7 @@ export class AiService {
   // ─── Helpers ──────────────────────────────────────────────────────────────
   private statusFromConfidence(parsed: ParsedReceipt): ExpenseStatus {
     if (parsed.amount == null) return ExpenseStatus.NEEDS_CLARIFICATION;
-    if (parsed.needsClarification || parsed.confidence < 70) return ExpenseStatus.NEEDS_CLARIFICATION;
-    // 70..89 — ожидает подтверждения; 90..100 — тоже PENDING, но бот предложит быстрое «Да».
+    if (parsed.needsClarification || parsed.confidence < 45) return ExpenseStatus.NEEDS_CLARIFICATION;
     return ExpenseStatus.PENDING;
   }
 
