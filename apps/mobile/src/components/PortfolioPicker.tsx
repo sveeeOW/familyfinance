@@ -1,5 +1,5 @@
 import React from 'react';
-import { ScrollView, Pressable, Text } from 'react-native';
+import { ScrollView, Pressable, Text, View } from 'react-native';
 import { usePortfolios } from '../store/portfolio';
 import { colors, radius, spacing } from '../theme';
 
@@ -7,8 +7,8 @@ const TYPE_LABELS: Record<string, string> = {
   PERSONAL: 'Личный',
   FAMILY: 'Семейный',
   SHARED: 'Совместный',
-  INVESTMENT: 'Инвест',
-  GOAL: 'Цель',
+  INVESTMENT: 'Инвестиционный',
+  GOAL: 'Целевой',
   OTHER: 'Другой',
 };
 
@@ -19,7 +19,7 @@ export function PortfolioPicker() {
     <ScrollView
       horizontal
       showsHorizontalScrollIndicator={false}
-      contentContainerStyle={{ gap: spacing(1), paddingBottom: spacing(1.25) }}
+      contentContainerStyle={{ gap: spacing(1), paddingVertical: spacing(1) }}
     >
       {portfolios.map((p) => {
         const active = p.id === selectedId;
@@ -28,17 +28,14 @@ export function PortfolioPicker() {
             key={p.id}
             onPress={() => select(p.id)}
             style={{
-              backgroundColor: active ? colors.primary : colors.chip,
-              paddingHorizontal: spacing(1.8),
-              paddingVertical: spacing(1.05),
-              borderRadius: radius.xl,
-              flexDirection: 'row',
-              alignItems: 'center',
-              gap: spacing(0.7),
+              backgroundColor: active ? colors.primary : colors.cardAlt,
+              paddingHorizontal: spacing(2),
+              paddingVertical: spacing(1),
+              borderRadius: radius.lg,
             }}
           >
-            <Text style={{ color: active ? colors.primaryText : colors.text, fontWeight: '900', fontSize: 14 }}>{p.name}</Text>
-            <Text style={{ color: active ? '#DDEBFF' : colors.textMuted, fontWeight: '700', fontSize: 13 }}>
+            <Text style={{ color: colors.text, fontWeight: '600' }}>{p.name}</Text>
+            <Text style={{ color: active ? '#E0E7FF' : colors.textMuted, fontSize: 11 }}>
               {TYPE_LABELS[p.type] ?? p.type}
             </Text>
           </Pressable>
