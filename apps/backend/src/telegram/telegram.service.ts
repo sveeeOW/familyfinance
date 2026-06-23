@@ -33,6 +33,9 @@ export class TelegramService implements OnModuleInit, OnApplicationShutdown {
       return;
     }
     this.bot = new Telegraf(token);
+    this.bot.catch((error) => {
+      this.logger.error(`Telegram handler error: ${(error as Error).message}`, (error as Error).stack);
+    });
     this.registerHandlers();
 
     const domain = process.env.TELEGRAM_WEBHOOK_DOMAIN;
@@ -99,13 +102,13 @@ export class TelegramService implements OnModuleInit, OnApplicationShutdown {
     bot.on('photo', async (ctx) => this.onPhoto(ctx));
     bot.on('text', async (ctx) => this.onText(ctx));
 
-    // Inline-кнопки
+    // Inline-кнопки. Важно быстро отвечать на callback, иначе Telegram показывает вечную загрузку.
     bot.action(/^confirm:(.+)$/, async (ctx) => this.onConfirm(ctx, ctx.match[1]));
     bot.action(/^force:(.+)$/, async (ctx) => this.onConfirm(ctx, ctx.match[1], true));
     bot.action(/^cancel:(.+)$/, async (ctx) => {
       this.sessions.delete(String(ctx.from!.id));
-      await ctx.answerCbQuery('Отменено');
-      await ctx.editMessageText('❌ Расход не добавлен.');
+      await this.safeAnswer(ctx, 'Отменено');
+      await this.safeEditOrReply(ctx, '❌ Расход не добавлен.');
     });
     bot.action(/^pickcat:(.+)$/, async (ctx) => this.onPickCategory(ctx, ctx.match[1]));
     bot.action(/^setcat:([^:]+):(.+)$/, async (ctx) => this.onSetCategory(ctx, ctx.match[1], ctx.match[2]));
@@ -164,8 +167,8 @@ export class TelegramService implements OnModuleInit, OnApplicationShutdown {
       });
       await this.presentDraft(ctx, user.id, draft);
     } catch (e) {
-      this.logger.error(`Ошибка распознавания фото: ${(e as Error).message}`);
-      await ctx.reply('Не удалось обработать изображение. Попробуйте ещё раз или опишите трату текстом.');
+      this.logger.error(`Ошибка распознавания фото: ${(e as Error).message}`, (e as Error).stack);
+      await ctx.reply('Не удалось распознать изображение. Напишите трату текстом, например: «22628 кредит авто».');
     }
   }
 
@@ -209,72 +212,129 @@ export class TelegramService implements OnModuleInit, OnApplicationShutdown {
 
   private async onConfirm(ctx: any, logId: string, force = false) {
     const tgId = String(ctx.from!.id);
+    await this.safeAnswer(ctx, 'Добавляю…');
     const user = await this.userByTelegram(tgId);
-    if (!user) return ctx.answerCbQuery('Аккаунт не привязан');
+    if (!user) {
+      await this.safeReply(ctx, 'Аккаунт не привязан. Сначала подключите Telegram в приложении.');
+      return;
+    }
     try {
       const res = await this.ai.confirmRecognition({ logId, userId: user.id, force });
       this.sessions.delete(tgId);
-      await ctx.answerCbQuery('Добавлено');
-      await ctx.editMessageText('✅ Расход добавлен в приложение.');
+      const text = res.alreadyCreated ? '✅ Этот расход уже был добавлен ранее.' : '✅ Расход добавлен в приложение.';
+      await this.safeEditOrReply(ctx, text);
       return res;
     } catch (e) {
-      await ctx.answerCbQuery('Ошибка');
-      await ctx.reply(`Не удалось добавить: ${(e as Error).message}`);
+      this.logger.error(`Не удалось подтвердить расход: ${(e as Error).message}`, (e as Error).stack);
+      await this.safeReply(ctx, `Не удалось добавить: ${(e as Error).message}`);
     }
   }
 
   private async onPickCategory(ctx: any, logId: string) {
-    const log = await this.prisma.aiRecognitionLog.findUnique({ where: { id: logId } });
-    if (!log?.portfolioId) return ctx.answerCbQuery('Сессия устарела');
-    const cats = await this.prisma.category.findMany({
-      where: { isActive: true, OR: [{ portfolioId: null, isSystem: true }, { portfolioId: log.portfolioId }] },
-      orderBy: { name: 'asc' },
-      take: 30,
-    });
-    const buttons = cats.map((c) => [Markup.button.callback(c.name, `setcat:${logId}:${c.id}`)]);
-    await ctx.answerCbQuery();
-    await ctx.reply('Выберите категорию:', Markup.inlineKeyboard(buttons));
+    await this.safeAnswer(ctx, 'Открываю категории…');
+    try {
+      const log = await this.prisma.aiRecognitionLog.findUnique({ where: { id: logId } });
+      if (!log?.portfolioId) {
+        await this.safeReply(ctx, 'Сессия устарела. Отправьте расход ещё раз.');
+        return;
+      }
+      const cats = await this.prisma.category.findMany({
+        where: { isActive: true, OR: [{ portfolioId: null, isSystem: true }, { portfolioId: log.portfolioId }] },
+        orderBy: { name: 'asc' },
+        take: 30,
+      });
+      const buttons = cats.map((c) => [Markup.button.callback(c.name, `setcat:${logId}:${c.id}`)]);
+      await this.safeReply(ctx, 'Выберите категорию:', Markup.inlineKeyboard(buttons));
+    } catch (e) {
+      this.logger.error(`Ошибка выбора категории: ${(e as Error).message}`, (e as Error).stack);
+      await this.safeReply(ctx, 'Не удалось открыть список категорий. Попробуйте ещё раз.');
+    }
   }
 
   private async onSetCategory(ctx: any, logId: string, categoryId: string) {
-    await this.prisma.aiRecognitionLog.update({ where: { id: logId }, data: { parsedCategoryId: categoryId } });
-    const cat = await this.prisma.category.findUnique({ where: { id: categoryId } });
-    await ctx.answerCbQuery('Категория обновлена');
-    await ctx.reply(
-      `Категория: ${cat?.name}. Добавить расход?`,
-      Markup.inlineKeyboard([
-        [Markup.button.callback('✅ Да, добавить', `confirm:${logId}`)],
-        [Markup.button.callback('❌ Отмена', `cancel:${logId}`)],
-      ]),
-    );
+    await this.safeAnswer(ctx, 'Категория обновляется…');
+    try {
+      await this.prisma.aiRecognitionLog.update({ where: { id: logId }, data: { parsedCategoryId: categoryId } });
+      const cat = await this.prisma.category.findUnique({ where: { id: categoryId } });
+      await this.safeReply(
+        ctx,
+        `Категория: ${cat?.name}. Добавить расход?`,
+        Markup.inlineKeyboard([
+          [Markup.button.callback('✅ Да, добавить', `confirm:${logId}`)],
+          [Markup.button.callback('❌ Отмена', `cancel:${logId}`)],
+        ]),
+      );
+    } catch (e) {
+      this.logger.error(`Ошибка обновления категории: ${(e as Error).message}`, (e as Error).stack);
+      await this.safeReply(ctx, 'Не удалось изменить категорию. Попробуйте ещё раз.');
+    }
   }
 
   private async onPickPortfolio(ctx: any, logId: string) {
     const tgId = String(ctx.from!.id);
+    await this.safeAnswer(ctx, 'Открываю портфели…');
     const user = await this.userByTelegram(tgId);
-    if (!user) return ctx.answerCbQuery('Аккаунт не привязан');
-    const portfolios = await this.prisma.portfolio.findMany({
-      where: { members: { some: { userId: user.id, status: 'ACTIVE' } } },
-    });
-    const buttons = portfolios.map((p) => [Markup.button.callback(p.name, `setport:${logId}:${p.id}`)]);
-    await ctx.answerCbQuery();
-    await ctx.reply('Выберите портфель:', Markup.inlineKeyboard(buttons));
+    if (!user) {
+      await this.safeReply(ctx, 'Аккаунт не привязан.');
+      return;
+    }
+    try {
+      const portfolios = await this.prisma.portfolio.findMany({
+        where: { members: { some: { userId: user.id, status: 'ACTIVE' } } },
+      });
+      const buttons = portfolios.map((p) => [Markup.button.callback(p.name, `setport:${logId}:${p.id}`)]);
+      await this.safeReply(ctx, 'Выберите портфель:', Markup.inlineKeyboard(buttons));
+    } catch (e) {
+      this.logger.error(`Ошибка выбора портфеля: ${(e as Error).message}`, (e as Error).stack);
+      await this.safeReply(ctx, 'Не удалось открыть список портфелей. Попробуйте ещё раз.');
+    }
   }
 
   private async onSetPortfolio(ctx: any, logId: string, portfolioId: string) {
-    await this.prisma.aiRecognitionLog.update({ where: { id: logId }, data: { portfolioId } });
-    const portfolio = await this.prisma.portfolio.findUnique({ where: { id: portfolioId } });
-    await ctx.answerCbQuery('Портфель обновлён');
-    await ctx.reply(
-      `Портфель: ${portfolio?.name}. Добавить расход?`,
-      Markup.inlineKeyboard([
-        [Markup.button.callback('✅ Да, добавить', `confirm:${logId}`)],
-        [Markup.button.callback('❌ Отмена', `cancel:${logId}`)],
-      ]),
-    );
+    await this.safeAnswer(ctx, 'Портфель обновляется…');
+    try {
+      await this.prisma.aiRecognitionLog.update({ where: { id: logId }, data: { portfolioId } });
+      const portfolio = await this.prisma.portfolio.findUnique({ where: { id: portfolioId } });
+      await this.safeReply(
+        ctx,
+        `Портфель: ${portfolio?.name}. Добавить расход?`,
+        Markup.inlineKeyboard([
+          [Markup.button.callback('✅ Да, добавить', `confirm:${logId}`)],
+          [Markup.button.callback('❌ Отмена', `cancel:${logId}`)],
+        ]),
+      );
+    } catch (e) {
+      this.logger.error(`Ошибка обновления портфеля: ${(e as Error).message}`, (e as Error).stack);
+      await this.safeReply(ctx, 'Не удалось изменить портфель. Попробуйте ещё раз.');
+    }
   }
 
   // ─── Helpers ──────────────────────────────────────────────────────────────
+  private async safeAnswer(ctx: any, text?: string) {
+    try {
+      await ctx.answerCbQuery(text);
+    } catch (e) {
+      this.logger.warn(`answerCbQuery failed: ${(e as Error).message}`);
+    }
+  }
+
+  private async safeReply(ctx: any, text: string, extra?: any) {
+    try {
+      await ctx.reply(text, extra);
+    } catch (e) {
+      this.logger.warn(`reply failed: ${(e as Error).message}`);
+    }
+  }
+
+  private async safeEditOrReply(ctx: any, text: string) {
+    try {
+      await ctx.editMessageText(text);
+    } catch (e) {
+      this.logger.warn(`editMessageText failed: ${(e as Error).message}`);
+      await this.safeReply(ctx, text);
+    }
+  }
+
   private async userByTelegram(telegramId: string) {
     return this.prisma.user.findUnique({ where: { telegramId } });
   }
