@@ -1,11 +1,15 @@
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Image, Pressable, ScrollView, Text, View } from 'react-native';
+import * as ImageManipulator from 'expo-image-manipulator';
 import * as ImagePicker from 'expo-image-picker';
 import { api } from '../api/endpoints';
 import { Category, RecognitionDraft } from '../api/types';
 import { usePortfolios } from '../store/portfolio';
 import { Button, Card, ScreenTitle } from '../components/ui';
 import { colors, radius, spacing } from '../theme';
+
+const MAX_OCR_WIDTH = 1200;
+const OCR_QUALITY = 0.45;
 
 export default function ScanReceiptScreen({ navigation }: any) {
   const { selectedId, load: loadPortfolios } = usePortfolios();
@@ -40,23 +44,26 @@ export default function ScanReceiptScreen({ navigation }: any) {
       return;
     }
     const result = fromCamera
-      ? await ImagePicker.launchCameraAsync({ base64: true, quality: 0.7 })
-      : await ImagePicker.launchImageLibraryAsync({ base64: true, quality: 0.7 });
+      ? await ImagePicker.launchCameraAsync({ base64: false, quality: 0.65 })
+      : await ImagePicker.launchImageLibraryAsync({ base64: false, quality: 0.65 });
     if (result.canceled) return;
 
     const asset = result.assets?.[0];
-    if (!asset?.base64) {
-      setError('Изображение выбрано, но приложение не получило base64-данные для распознавания. Попробуйте выбрать другой файл или сделать фото через камеру.');
+    if (!asset?.uri) {
+      setError('Изображение выбрано, но приложение не получило файл для распознавания. Попробуйте выбрать другой файл или сделать фото через камеру.');
       return;
     }
 
     setPreview(asset.uri);
     setLoading(true);
-    setStatusText('Отправляю чек на распознавание…');
+    setStatusText('Сжимаю изображение перед распознаванием…');
     setDraft(null);
     setCategoryId(null);
     try {
-      const d = await api.recognizeImage(selectedId, asset.base64, asset.mimeType ?? 'image/jpeg');
+      const prepared = await prepareImageForOcr(asset.uri, asset.width);
+      setPreview(prepared.uri);
+      setStatusText('Отправляю чек на распознавание…');
+      const d = await api.recognizeImage(selectedId, prepared.base64, 'image/jpeg');
       setDraft(d);
       setCategoryId(d.resolvedCategoryId);
       setStatusText(null);
@@ -65,7 +72,10 @@ export default function ScanReceiptScreen({ navigation }: any) {
         setError(d.parsed.clarificationQuestion ?? 'Чек загрузился, но сумму распознать не удалось. Можно добавить расход вручную.');
       }
     } catch (e: any) {
-      setError(e.message ?? 'Не удалось распознать чек. Попробуйте ещё раз или добавьте расход вручную.');
+      const message = e?.status === 413
+        ? 'Фото всё ещё слишком большое для отправки. Попробуйте обрезать чек или выбрать скриншот меньшего размера.'
+        : e.message ?? 'Не удалось распознать чек. Попробуйте ещё раз или добавьте расход вручную.';
+      setError(message);
     } finally {
       setLoading(false);
     }
@@ -194,6 +204,25 @@ export default function ScanReceiptScreen({ navigation }: any) {
       ) : null}
     </ScrollView>
   );
+}
+
+async function prepareImageForOcr(uri: string, width?: number | null): Promise<{ uri: string; base64: string }> {
+  const resizeWidth = width && width > MAX_OCR_WIDTH ? MAX_OCR_WIDTH : undefined;
+  const result = await ImageManipulator.manipulateAsync(
+    uri,
+    resizeWidth ? [{ resize: { width: resizeWidth } }] : [],
+    {
+      compress: OCR_QUALITY,
+      format: ImageManipulator.SaveFormat.JPEG,
+      base64: true,
+    },
+  );
+
+  if (!result.base64) {
+    throw new Error('Не удалось подготовить изображение для распознавания.');
+  }
+
+  return { uri: result.uri, base64: result.base64 };
 }
 
 function Row({ label, value }: { label: string; value: string }) {
