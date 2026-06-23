@@ -11,6 +11,9 @@
     "mobile": "npm run start --workspace apps/mobile",
     "build:backend": "npm run build --workspace apps/backend"
   },
+  "dependencies": {
+    "resolve-from": "^5.0.0"
+  },
   "engines": {
     "node": ">=20"
   }
