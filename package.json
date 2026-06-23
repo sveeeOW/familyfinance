@@ -9,8 +9,7 @@
   "scripts": {
     "backend": "npm run start:dev --workspace apps/backend",
     "mobile": "npm run start --workspace apps/mobile",
-    "build:backend": "npm run build --workspace apps/backend",
-    "postinstall": "cd apps/backend && npx prisma db push --accept-data-loss && npx prisma generate"
+    "build:backend": "npm run build --workspace apps/backend"
   },
   "dependencies": {
     "resolve-from": "^5.0.0"
