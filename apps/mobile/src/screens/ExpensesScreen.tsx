@@ -6,7 +6,7 @@ import { Expense } from '../api/types';
 import { usePortfolios } from '../store/portfolio';
 import { Card, ScreenTitle } from '../components/ui';
 import { PortfolioPicker } from '../components/PortfolioPicker';
-import { colors, spacing } from '../theme';
+import { colors, radius, spacing } from '../theme';
 
 const STATUS_LABEL: Record<Expense['status'], { text: string; color: string }> = {
   CONFIRMED: { text: '', color: colors.textMuted },
@@ -66,6 +66,22 @@ export default function ExpensesScreen({ navigation }: any) {
                 <Text style={{ color: colors.expense, fontWeight: '900', fontSize: 17 }}>
                   −{new Intl.NumberFormat('ru-RU').format(Number(item.amount))} ₽
                 </Text>
+              </View>
+              <View style={{ flexDirection: 'row', gap: spacing(1), marginTop: spacing(1.5) }}>
+                <Pressable
+                  onPress={() => navigation.navigate('AddExpense', { expense: item })}
+                  style={{
+                    flex: 1,
+                    paddingVertical: spacing(1),
+                    borderRadius: radius.md,
+                    alignItems: 'center',
+                    backgroundColor: colors.primarySoft,
+                    borderWidth: 1,
+                    borderColor: colors.border,
+                  }}
+                >
+                  <Text style={{ color: colors.primary, fontWeight: '800' }}>Изменить</Text>
+                </Pressable>
               </View>
             </Card>
           );
