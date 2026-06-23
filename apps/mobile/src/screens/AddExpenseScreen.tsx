@@ -13,6 +13,7 @@ const PERIODS = [
   { key: 'TWO_WEEKS', label: 'Каждые 2 недели', interval: 2, unit: 'WEEK' },
   { key: 'THREE_WEEKS', label: 'Каждые 3 недели', interval: 3, unit: 'WEEK' },
   { key: 'MONTHLY', label: 'Каждый месяц' },
+  { key: 'THREE_MONTHS', label: 'Каждые 3 месяца', interval: 3, unit: 'MONTH' },
   { key: 'FOUR_MONTHS', label: 'Каждые 4 месяца', interval: 4, unit: 'MONTH' },
   { key: 'SIX_MONTHS', label: 'Полгода', interval: 6, unit: 'MONTH' },
   { key: 'CUSTOM', label: 'Свой период' },
@@ -65,6 +66,7 @@ function periodFromComment(comment?: string | null) {
   const [interval, unit] = tag.split(':');
   if (unit === 'WEEK' && interval === '2') return { key: 'TWO_WEEKS', interval, unit };
   if (unit === 'WEEK' && interval === '3') return { key: 'THREE_WEEKS', interval, unit };
+  if (unit === 'MONTH' && interval === '3') return { key: 'THREE_MONTHS', interval, unit };
   if (unit === 'MONTH' && interval === '4') return { key: 'FOUR_MONTHS', interval, unit };
   if (unit === 'MONTH' && interval === '6') return { key: 'SIX_MONTHS', interval, unit };
   return { key: 'CUSTOM', interval: interval || '2', unit: unit || 'WEEK' };
