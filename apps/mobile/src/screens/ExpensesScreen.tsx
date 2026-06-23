@@ -1,18 +1,18 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { FlatList, Pressable, Text, View } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { api } from '../api/endpoints';
 import { Expense } from '../api/types';
 import { usePortfolios } from '../store/portfolio';
-import { Card, ScreenTitle } from '../components/ui';
+import { Card, Chip, ScreenTitle, SearchField } from '../components/ui';
 import { PortfolioPicker } from '../components/PortfolioPicker';
-import { colors, spacing } from '../theme';
+import { colors, radius, spacing } from '../theme';
 
 const STATUS_LABEL: Record<Expense['status'], { text: string; color: string }> = {
   CONFIRMED: { text: '', color: colors.textMuted },
   PENDING: { text: 'ожидает', color: colors.warning },
   NEEDS_CLARIFICATION: { text: 'уточнить', color: colors.warning },
-  RECOGNITION_ERROR: { text: 'ошибка', color: colors.expense },
+  RECOGNITION_ERROR: { text: 'ошибка', color: colors.danger },
 };
 
 function periodLabel(item: any) {
@@ -36,38 +36,72 @@ export default function ExpensesScreen({ navigation }: any) {
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
+  const total = useMemo(() => items.reduce((sum, item) => sum + Number(item.amount), 0), [items]);
+  const topCategories = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const item of items) {
+      const key = item.category?.name ?? 'Остальное';
+      map.set(key, (map.get(key) ?? 0) + Number(item.amount));
+    }
+    return [...map.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6);
+  }, [items]);
+
   return (
-    <View style={{ flex: 1, backgroundColor: colors.bg, padding: spacing(2.5) }}>
-      <ScreenTitle>Расходы</ScreenTitle>
+    <View style={{ flex: 1, backgroundColor: colors.bg, paddingHorizontal: spacing(2.5) }}>
+      <ScreenTitle>Платежи</ScreenTitle>
+      <SearchField />
       <PortfolioPicker />
+      <View style={{ flexDirection: 'row', gap: spacing(1), marginBottom: spacing(1.5) }}>
+        <Chip label="Июнь" active />
+        <Chip label="Счета и карты" />
+        <Chip label="Без переводов" />
+      </View>
+
+      <Card style={{ marginBottom: spacing(1.5) }}>
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+          <View>
+            <Text style={{ color: colors.text, fontSize: 40, fontWeight: '900', letterSpacing: -1.4 }}>{fmt(total)}</Text>
+            <Text style={{ color: colors.text, fontSize: 17, marginTop: 2 }}>Траты</Text>
+          </View>
+          <Text style={{ color: colors.textSubtle, fontSize: 28 }}>×</Text>
+        </View>
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: spacing(0.8), marginTop: spacing(2.2) }}>
+          {topCategories.map(([name, amount]) => (
+            <View key={name} style={{ backgroundColor: colors.primarySoft, borderRadius: radius.xl, paddingHorizontal: spacing(1.1), paddingVertical: spacing(0.65) }}>
+              <Text style={{ color: colors.textMuted, fontWeight: '900', fontSize: 12 }}>{name} {fmt(amount)}</Text>
+            </View>
+          ))}
+        </View>
+      </Card>
+
       <FlatList
         data={items}
         keyExtractor={(i) => i.id}
-        style={{ marginTop: spacing(1) }}
-        contentContainerStyle={{ paddingBottom: spacing(10) }}
+        contentContainerStyle={{ paddingBottom: spacing(11) }}
         ListEmptyComponent={<Text style={{ color: colors.textMuted, marginTop: spacing(2) }}>Расходов пока нет.</Text>}
         renderItem={({ item }) => {
           const status = STATUS_LABEL[item.status];
           const period = periodLabel(item);
+          const date = new Date(item.date).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' });
           return (
-            <Card style={{ marginBottom: spacing(1.25) }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing(1.5) }}>
-                <View style={{ width: 14, height: 14, borderRadius: 7, backgroundColor: item.category?.color ?? colors.primary }} />
-                <View style={{ flex: 1 }}>
-                  <Text style={{ color: colors.text, fontWeight: '900', fontSize: 16 }} numberOfLines={1}>
-                    {item.title ?? item.merchant ?? item.category?.name ?? 'Расход'}
-                  </Text>
-                  <Text style={{ color: colors.textMuted, fontSize: 12, marginTop: 4 }}>
-                    {item.category?.name ?? 'Без категории'} · {new Date(item.date).toLocaleDateString('ru-RU')}
-                    {status.text ? ` · ${status.text}` : ''}
-                    {period ? ` · ${period}` : ''}
-                  </Text>
-                </View>
-                <Text style={{ color: colors.expense, fontWeight: '900', fontSize: 17 }}>
-                  −{new Intl.NumberFormat('ru-RU').format(Number(item.amount))} ₽
+            <View style={{ paddingVertical: spacing(1.2), flexDirection: 'row', alignItems: 'center', gap: spacing(1.4) }}>
+              <View style={{ width: 54, height: 54, borderRadius: 27, backgroundColor: item.category?.color ?? colors.primary, alignItems: 'center', justifyContent: 'center' }}>
+                <Text style={{ color: '#fff', fontWeight: '900', fontSize: 22 }}>{(item.category?.name ?? item.title ?? 'Р').slice(0, 1)}</Text>
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={{ color: colors.text, fontWeight: '900', fontSize: 17 }} numberOfLines={1}>
+                  {item.title ?? item.merchant ?? item.category?.name ?? 'Расход'}
+                </Text>
+                <Text style={{ color: colors.textMuted, fontSize: 13, marginTop: 3 }} numberOfLines={1}>
+                  {item.category?.name ?? 'Без категории'} · {date}
+                  {status.text ? ` · ${status.text}` : ''}
+                  {period ? ` · ${period}` : ''}
                 </Text>
               </View>
-            </Card>
+              <Text style={{ color: colors.expense, fontWeight: '900', fontSize: 17 }}>
+                −{new Intl.NumberFormat('ru-RU').format(Number(item.amount))} ₽
+              </Text>
+            </View>
           );
         }}
       />
@@ -82,9 +116,9 @@ const fabStyle = {
   position: 'absolute' as const,
   right: spacing(3),
   bottom: spacing(3),
-  width: 60,
-  height: 60,
-  borderRadius: 30,
+  width: 62,
+  height: 62,
+  borderRadius: 31,
   backgroundColor: colors.primary,
   alignItems: 'center' as const,
   justifyContent: 'center' as const,
@@ -92,5 +126,7 @@ const fabStyle = {
   shadowOpacity: 0.28,
   shadowRadius: 16,
   shadowOffset: { width: 0, height: 8 },
-  elevation: 4,
+  elevation: 5,
 };
+
+const fmt = (n?: number) => new Intl.NumberFormat('ru-RU').format(Math.round(n ?? 0)) + ' ₽';
