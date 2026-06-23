@@ -19,14 +19,6 @@ export function Card({ style, children, ...rest }: ViewProps) {
   );
 }
 
-export function SoftCard({ style, children, ...rest }: ViewProps) {
-  return (
-    <View style={[styles.softCard, style]} {...rest}>
-      {children}
-    </View>
-  );
-}
-
 export function Button({
   title,
   onPress,
@@ -36,13 +28,12 @@ export function Button({
 }: {
   title: string;
   onPress: () => void;
-  variant?: 'primary' | 'ghost' | 'danger' | 'yellow';
+  variant?: 'primary' | 'ghost' | 'danger';
   loading?: boolean;
   disabled?: boolean;
 }) {
   const isGhost = variant === 'ghost';
   const isDanger = variant === 'danger';
-  const isYellow = variant === 'yellow';
   return (
     <Pressable
       onPress={onPress}
@@ -51,17 +42,14 @@ export function Button({
         styles.button,
         isGhost && styles.buttonGhost,
         isDanger && styles.buttonDanger,
-        isYellow && styles.buttonYellow,
         (disabled || loading) && { opacity: 0.5 },
-        pressed && { transform: [{ scale: 0.985 }], opacity: 0.92 },
+        pressed && { transform: [{ scale: 0.99 }], opacity: 0.9 },
       ]}
     >
       {loading ? (
-        <ActivityIndicator color={isGhost ? colors.primary : isYellow ? colors.accentText : colors.primaryText} />
+        <ActivityIndicator color={isGhost ? colors.primary : colors.primaryText} />
       ) : (
-        <Text style={[styles.buttonText, isGhost && { color: colors.primary }, isYellow && { color: colors.accentText }]}>
-          {title}
-        </Text>
+        <Text style={[styles.buttonText, isGhost && { color: colors.primary }]}>{title}</Text>
       )}
     </Pressable>
   );
@@ -82,20 +70,11 @@ export function Field(props: TextInputProps & { label?: string }) {
   );
 }
 
-export function SearchField({ placeholder = 'Поиск' }: { placeholder?: string }) {
-  return (
-    <View style={styles.search}>
-      <Text style={{ fontSize: 22, color: colors.textMuted, marginRight: 8 }}>⌕</Text>
-      <Text style={{ color: colors.textMuted, fontSize: 17 }}>{placeholder}</Text>
-    </View>
-  );
-}
-
-export function Money({ value, currency = '₽', tone, size = 18 }: { value: number; currency?: string; tone?: 'income' | 'expense'; size?: number }) {
+export function Money({ value, currency = '₽', tone }: { value: number; currency?: string; tone?: 'income' | 'expense' }) {
   const color = tone === 'income' ? colors.income : tone === 'expense' ? colors.expense : colors.text;
   const sign = tone === 'income' ? '+' : tone === 'expense' ? '−' : '';
   return (
-    <Text style={{ color, fontWeight: '900', fontSize, letterSpacing: -0.4 }}>
+    <Text style={{ color, fontWeight: '800', fontSize: 18 }}>
       {sign}
       {new Intl.NumberFormat('ru-RU').format(Math.abs(value))} {currency}
     </Text>
@@ -106,72 +85,44 @@ export function ScreenTitle({ children }: { children: React.ReactNode }) {
   return <Text style={styles.title}>{children}</Text>;
 }
 
-export function Chip({ label, active }: { label: string; active?: boolean }) {
-  return (
-    <View style={[styles.chip, active && styles.chipActive]}>
-      <Text style={[styles.chipText, active && styles.chipTextActive]}>{label}</Text>
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
   card: {
     backgroundColor: colors.card,
-    borderRadius: radius.xl,
-    padding: spacing(2.5),
-    borderWidth: 0,
+    borderRadius: radius.lg,
+    padding: spacing(2),
+    borderWidth: 1,
+    borderColor: colors.border,
     shadowColor: colors.shadow,
-    shadowOpacity: 0.14,
-    shadowRadius: 24,
-    shadowOffset: { width: 0, height: 14 },
-    elevation: 4,
-  },
-  softCard: {
-    backgroundColor: colors.cardAlt,
-    borderRadius: radius.xl,
-    padding: spacing(2.25),
-    borderWidth: 0,
+    shadowOpacity: 0.18,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 3,
   },
   button: {
     backgroundColor: colors.primary,
-    paddingVertical: spacing(1.45),
-    paddingHorizontal: spacing(2.25),
-    borderRadius: radius.xl,
+    paddingVertical: spacing(1.75),
+    paddingHorizontal: spacing(2),
+    borderRadius: radius.lg,
     alignItems: 'center',
-    justifyContent: 'center',
-    minHeight: 48,
+    shadowColor: colors.primary,
+    shadowOpacity: 0.24,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 3,
   },
-  buttonGhost: { backgroundColor: colors.chip, shadowOpacity: 0 },
-  buttonDanger: { backgroundColor: colors.danger },
-  buttonYellow: { backgroundColor: colors.accent },
+  buttonGhost: { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, shadowOpacity: 0 },
+  buttonDanger: { backgroundColor: colors.expense, shadowColor: colors.expense },
   buttonText: { color: colors.primaryText, fontWeight: '800', fontSize: 16 },
-  label: { color: colors.textMuted, marginBottom: 8, fontSize: 13, fontWeight: '700' },
+  label: { color: colors.textMuted, marginBottom: 6, fontSize: 13, fontWeight: '700' },
   input: {
     backgroundColor: colors.card,
-    borderRadius: radius.lg,
-    paddingHorizontal: spacing(2),
-    paddingVertical: spacing(1.65),
-    color: colors.text,
-    borderWidth: 0,
-    fontSize: 16,
-  },
-  search: {
-    height: 52,
-    borderRadius: radius.lg,
-    backgroundColor: colors.chip,
+    borderRadius: radius.md,
     paddingHorizontal: spacing(1.75),
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: spacing(1.5),
+    paddingVertical: spacing(1.55),
+    color: colors.text,
+    borderWidth: 1,
+    borderColor: colors.border,
+    fontSize: 15,
   },
-  title: { color: colors.text, fontSize: 34, fontWeight: '900', marginBottom: spacing(1.5), letterSpacing: -1.2 },
-  chip: {
-    backgroundColor: colors.chip,
-    paddingHorizontal: spacing(1.7),
-    paddingVertical: spacing(1),
-    borderRadius: radius.xl,
-  },
-  chipActive: { backgroundColor: colors.primary },
-  chipText: { color: colors.text, fontWeight: '800', fontSize: 14 },
-  chipTextActive: { color: colors.primaryText },
+  title: { color: colors.text, fontSize: 28, fontWeight: '900', marginBottom: spacing(2), letterSpacing: -0.5 },
 });
