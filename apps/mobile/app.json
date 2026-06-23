@@ -2,14 +2,14 @@
   "expo": {
     "name": "Family Finance",
     "slug": "family-finance",
-    "version": "0.1.0",
+    "version": "0.1.1",
     "orientation": "portrait",
     "scheme": "familyfinance",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
     "splash": {
       "resizeMode": "contain",
-      "backgroundColor": "#0E1726"
+      "backgroundColor": "#F3F6FB"
     },
     "ios": {
       "supportsTablet": true,
@@ -38,13 +38,13 @@
       "shortName": "Finance",
       "lang": "ru",
       "scope": "/",
-      "themeColor": "#0E1726",
-      "backgroundColor": "#0E1726",
+      "themeColor": "#F3F6FB",
+      "backgroundColor": "#F3F6FB",
       "description": "Семейный финансовый портфель: доходы, расходы, обязательные платежи и аналитика.",
       "display": "standalone",
       "startUrl": "/",
       "orientation": "portrait",
-      "barStyle": "black"
+      "barStyle": "default"
     }
   }
 }
