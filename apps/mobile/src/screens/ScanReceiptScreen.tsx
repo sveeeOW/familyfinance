@@ -8,42 +8,64 @@ import { Button, Card, ScreenTitle } from '../components/ui';
 import { colors, radius, spacing } from '../theme';
 
 export default function ScanReceiptScreen({ navigation }: any) {
-  const { selectedId } = usePortfolios();
+  const { selectedId, load: loadPortfolios } = usePortfolios();
   const [preview, setPreview] = useState<string | null>(null);
   const [draft, setDraft] = useState<RecognitionDraft | null>(null);
   const [categories, setCategories] = useState<Category[]>([]);
   const [categoryId, setCategoryId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [statusText, setStatusText] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    loadPortfolios().catch(() => {});
+  }, [loadPortfolios]);
 
   useEffect(() => {
     if (selectedId) api.categories(selectedId).then(setCategories).catch(() => {});
   }, [selectedId]);
 
   const pick = async (fromCamera: boolean) => {
-    if (!selectedId) return;
+    setError(null);
+    if (!selectedId) {
+      setError('Сначала создайте или выберите портфель. Без портфеля чек некуда добавить.');
+      return;
+    }
     const perm = fromCamera
       ? await ImagePicker.requestCameraPermissionsAsync()
       : await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!perm.granted) {
-      Alert.alert('Нет доступа', 'Разрешите доступ к камере/галерее в настройках.');
+      setError('Нет доступа к камере/галерее. Разрешите доступ в настройках.');
       return;
     }
     const result = fromCamera
-      ? await ImagePicker.launchCameraAsync({ base64: true, quality: 0.6 })
-      : await ImagePicker.launchImageLibraryAsync({ base64: true, quality: 0.6 });
-    if (result.canceled || !result.assets?.[0]?.base64) return;
+      ? await ImagePicker.launchCameraAsync({ base64: true, quality: 0.7 })
+      : await ImagePicker.launchImageLibraryAsync({ base64: true, quality: 0.7 });
+    if (result.canceled) return;
 
-    const asset = result.assets[0];
+    const asset = result.assets?.[0];
+    if (!asset?.base64) {
+      setError('Изображение выбрано, но приложение не получило base64-данные для распознавания. Попробуйте выбрать другой файл или сделать фото через камеру.');
+      return;
+    }
+
     setPreview(asset.uri);
     setLoading(true);
+    setStatusText('Отправляю чек на распознавание…');
     setDraft(null);
+    setCategoryId(null);
     try {
-      const d = await api.recognizeImage(selectedId, asset.base64!, asset.mimeType ?? 'image/jpeg');
+      const d = await api.recognizeImage(selectedId, asset.base64, asset.mimeType ?? 'image/jpeg');
       setDraft(d);
       setCategoryId(d.resolvedCategoryId);
+      setStatusText(null);
+
+      if (!d.parsed.amount) {
+        setError(d.parsed.clarificationQuestion ?? 'Чек загрузился, но сумму распознать не удалось. Можно добавить расход вручную.');
+      }
     } catch (e: any) {
-      Alert.alert('Ошибка распознавания', e.message ?? 'Попробуйте ещё раз');
+      setError(e.message ?? 'Не удалось распознать чек. Попробуйте ещё раз или добавьте расход вручную.');
     } finally {
       setLoading(false);
     }
@@ -51,45 +73,77 @@ export default function ScanReceiptScreen({ navigation }: any) {
 
   const confirm = async (force = false) => {
     if (!draft) return;
+    setError(null);
     setSaving(true);
     try {
       await api.confirmRecognition({ logId: draft.logId, categoryId: categoryId ?? undefined, force });
-      Alert.alert('Готово', 'Расход добавлен в портфель.', [
-        { text: 'OK', onPress: () => navigation.goBack() },
-      ]);
+      navigation.navigate('Расходы');
     } catch (e: any) {
-      Alert.alert('Ошибка', e.message ?? 'Не удалось добавить');
+      setError(e.message ?? 'Не удалось добавить расход');
     } finally {
       setSaving(false);
     }
   };
 
+  const addManual = () => {
+    navigation.replace('AddExpense', {
+      expense: draft?.parsed?.amount
+        ? {
+            amount: String(draft.parsed.amount),
+            title: draft.parsed.merchant ?? draft.parsed.description ?? '',
+            merchant: draft.parsed.merchant ?? undefined,
+            date: draft.parsed.date ?? new Date().toISOString(),
+            categoryId: categoryId ?? undefined,
+            scope: 'SHARED',
+          }
+        : undefined,
+    });
+  };
+
   return (
     <ScrollView style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ padding: spacing(2.5) }}>
-      <ScreenTitle>Сканировать чек</ScreenTitle>
+      <ScreenTitle subtitle="Фото чека или банковского уведомления">Сканировать чек</ScreenTitle>
 
       <View style={{ flexDirection: 'row', gap: spacing(1.5), marginBottom: spacing(2) }}>
         <View style={{ flex: 1 }}>
-          <Button title="📷 Камера" onPress={() => pick(true)} />
+          <Button title="Камера" icon="camera" onPress={() => pick(true)} disabled={loading || saving} />
         </View>
         <View style={{ flex: 1 }}>
-          <Button title="🖼 Галерея" variant="ghost" onPress={() => pick(false)} />
+          <Button title="Галерея" icon="receipt" variant="ghost" onPress={() => pick(false)} disabled={loading || saving} />
         </View>
       </View>
+
+      {!selectedId ? (
+        <Card style={{ borderColor: colors.warning, marginBottom: spacing(2) }}>
+          <Text style={{ color: colors.warning, fontWeight: '600' }}>Портфель не выбран</Text>
+          <Text style={{ color: colors.textMuted, marginTop: 6 }}>Создайте или выберите портфель, чтобы добавлять чеки.</Text>
+        </Card>
+      ) : null}
 
       {preview ? (
         <Image
           source={{ uri: preview }}
-          style={{ width: '100%', height: 180, borderRadius: radius.md, marginBottom: spacing(2) }}
+          style={{ width: '100%', height: 220, borderRadius: radius.lg, marginBottom: spacing(2), backgroundColor: colors.cardAlt }}
           resizeMode="cover"
         />
       ) : null}
 
       {loading ? (
-        <View style={{ alignItems: 'center', padding: spacing(3) }}>
+        <Card style={{ alignItems: 'center', marginBottom: spacing(2) }}>
           <ActivityIndicator color={colors.primary} />
-          <Text style={{ color: colors.textMuted, marginTop: spacing(1) }}>Распознаю чек…</Text>
-        </View>
+          <Text style={{ color: colors.text, marginTop: spacing(1), fontWeight: '600' }}>{statusText ?? 'Распознаю чек…'}</Text>
+          <Text style={{ color: colors.textMuted, marginTop: 4, textAlign: 'center' }}>Обычно это занимает несколько секунд.</Text>
+        </Card>
+      ) : null}
+
+      {error ? (
+        <Card style={{ borderColor: colors.warning, marginBottom: spacing(2) }}>
+          <Text style={{ color: colors.warning, fontWeight: '600' }}>Нужна проверка</Text>
+          <Text style={{ color: colors.textMuted, marginTop: 6 }}>{error}</Text>
+          <View style={{ marginTop: spacing(1.5) }}>
+            <Button title="Добавить вручную" variant="ghost" onPress={addManual} />
+          </View>
+        </Card>
       ) : null}
 
       {draft ? (
@@ -103,12 +157,6 @@ export default function ScanReceiptScreen({ navigation }: any) {
           <Row label="Продавец" value={draft.parsed.merchant ?? draft.parsed.description ?? '—'} />
           <Row label="Дата" value={draft.parsed.date ?? new Date().toISOString().slice(0, 10)} />
           <Row label="Уверенность" value={`${draft.parsed.confidence}%`} />
-
-          {draft.parsed.clarificationQuestion ? (
-            <Text style={{ color: colors.warning, marginTop: spacing(1) }}>
-              {draft.parsed.clarificationQuestion}
-            </Text>
-          ) : null}
 
           <Text style={{ color: colors.textMuted, marginTop: spacing(1.5), marginBottom: 6, fontSize: 13 }}>
             Категория
@@ -132,16 +180,15 @@ export default function ScanReceiptScreen({ navigation }: any) {
             ))}
           </View>
 
-          <View style={{ marginTop: spacing(2) }}>
+          <View style={{ marginTop: spacing(2), gap: spacing(1) }}>
             {draft.parsed.amount ? (
               <Button
                 title={draft.duplicateOf ? 'Всё равно добавить' : 'Добавить расход'}
                 onPress={() => confirm(!!draft.duplicateOf)}
                 loading={saving}
               />
-            ) : (
-              <Button title="Добавить вручную" variant="ghost" onPress={() => navigation.replace('AddExpense')} />
-            )}
+            ) : null}
+            <Button title="Заполнить вручную" variant="ghost" onPress={addManual} disabled={saving} />
           </View>
         </Card>
       ) : null}
@@ -151,9 +198,9 @@ export default function ScanReceiptScreen({ navigation }: any) {
 
 function Row({ label, value }: { label: string; value: string }) {
   return (
-    <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4 }}>
+    <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 5, gap: spacing(1) }}>
       <Text style={{ color: colors.textMuted }}>{label}</Text>
-      <Text style={{ color: colors.text, fontWeight: '600', flexShrink: 1, textAlign: 'right' }}>{value}</Text>
+      <Text style={{ color: colors.text, fontWeight: '500', flexShrink: 1, textAlign: 'right' }}>{value}</Text>
     </View>
   );
 }
