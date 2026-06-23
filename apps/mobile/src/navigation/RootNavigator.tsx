@@ -39,11 +39,11 @@ const navTheme = {
 };
 
 const TAB_ICON: Record<string, string> = {
-  Главная: '⌁',
-  Расходы: '−',
+  Главная: '▣',
+  Расходы: '○',
   Доходы: '+',
-  Портфели: '□',
-  Аналитика: '◌',
+  Портфели: '◈',
+  Аналитика: '▥',
 };
 
 function MainTabs() {
@@ -52,22 +52,22 @@ function MainTabs() {
       screenOptions={({ route }) => ({
         headerShown: false,
         tabBarStyle: {
-          backgroundColor: colors.card,
+          backgroundColor: 'rgba(255,255,255,0.96)',
           borderTopColor: colors.border,
-          height: 68,
-          paddingTop: spacing(0.75),
-          paddingBottom: spacing(1),
+          height: 74,
+          paddingTop: spacing(0.8),
+          paddingBottom: spacing(1.15),
           shadowColor: colors.shadow,
-          shadowOpacity: 0.15,
-          shadowRadius: 18,
-          shadowOffset: { width: 0, height: -8 },
-          elevation: 8,
+          shadowOpacity: 0.18,
+          shadowRadius: 22,
+          shadowOffset: { width: 0, height: -10 },
+          elevation: 12,
         },
-        tabBarLabelStyle: { fontWeight: '800', fontSize: 11 },
+        tabBarLabelStyle: { fontWeight: '800', fontSize: 11, marginTop: 2 },
         tabBarActiveTintColor: colors.primary,
-        tabBarInactiveTintColor: colors.textMuted,
-        tabBarIcon: ({ color }) => (
-          <Text style={{ fontSize: 21, color, fontWeight: '900' }}>{TAB_ICON[route.name] ?? '•'}</Text>
+        tabBarInactiveTintColor: colors.textSubtle,
+        tabBarIcon: ({ color, focused }) => (
+          <Text style={{ fontSize: focused ? 22 : 20, color, fontWeight: '900' }}>{TAB_ICON[route.name] ?? '•'}</Text>
         ),
       })}
     >
@@ -101,20 +101,22 @@ export default function RootNavigator() {
               component={MainTabs}
               options={({ navigation }) => ({
                 headerShown: true,
-                title: 'Family Finance',
+                title: '',
                 headerRight: () => (
                   <Pressable
                     onPress={() => navigation.navigate('Settings')}
                     hitSlop={12}
                     style={{
-                      width: 38,
-                      height: 38,
-                      borderRadius: radius.lg,
+                      width: 42,
+                      height: 42,
+                      borderRadius: radius.xl,
                       alignItems: 'center',
                       justifyContent: 'center',
                       backgroundColor: colors.card,
-                      borderWidth: 1,
-                      borderColor: colors.border,
+                      shadowColor: colors.shadow,
+                      shadowOpacity: 0.12,
+                      shadowRadius: 14,
+                      shadowOffset: { width: 0, height: 8 },
                     }}
                   >
                     <Text style={{ fontSize: 18 }}>⚙️</Text>
