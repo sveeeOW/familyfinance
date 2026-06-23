@@ -57,34 +57,34 @@ function MainTabs() {
           left: spacing(2),
           right: spacing(2),
           bottom: spacing(1.5),
-          height: 76,
+          height: 84,
           backgroundColor: colors.card,
           borderTopWidth: 0,
           borderRadius: radius.xl,
-          paddingTop: spacing(1),
-          paddingBottom: spacing(1.1),
-          paddingHorizontal: spacing(0.6),
+          paddingTop: spacing(0.85),
+          paddingBottom: spacing(1),
+          paddingHorizontal: spacing(0.7),
           ...shadows.card,
         },
         tabBarItemStyle: {
           borderRadius: radius.lg,
           marginHorizontal: 2,
         },
-        tabBarLabelStyle: { fontWeight: '900', fontSize: 10, marginTop: 2 },
-        tabBarActiveTintColor: colors.primary,
+        tabBarLabelStyle: { fontWeight: '500', fontSize: 10, marginTop: 1 },
+        tabBarActiveTintColor: colors.text,
         tabBarInactiveTintColor: colors.textSubtle,
         tabBarIcon: ({ color, focused }) => (
           <View
             style={{
-              width: 38,
-              height: 34,
+              width: 52,
+              height: 42,
               borderRadius: radius.pill,
               alignItems: 'center',
               justifyContent: 'center',
-              backgroundColor: focused ? colors.primarySoft : 'transparent',
+              backgroundColor: focused ? colors.yellowSoft : 'transparent',
             }}
           >
-            <Icon name={TAB_ICON[route.name] ?? 'home'} size={21} color={color} strokeWidth={focused ? 2.7 : 2.2} />
+            <Icon name={TAB_ICON[route.name] ?? 'home'} size={focused ? 30 : 27} color={color} strokeWidth={focused ? 2.35 : 2.05} />
           </View>
         ),
       })}
@@ -108,7 +108,7 @@ export default function RootNavigator() {
           headerStyle: { backgroundColor: colors.bg },
           headerShadowVisible: false,
           headerTintColor: colors.text,
-          headerTitleStyle: { fontWeight: '900', letterSpacing: -0.4 },
+          headerTitleStyle: { fontWeight: '600', letterSpacing: -0.3 },
           contentStyle: { backgroundColor: colors.bg },
         }}
       >
@@ -125,8 +125,8 @@ export default function RootNavigator() {
                     onPress={() => navigation.navigate('Settings')}
                     hitSlop={12}
                     style={{
-                      width: 42,
-                      height: 42,
+                      width: 44,
+                      height: 44,
                       borderRadius: radius.pill,
                       alignItems: 'center',
                       justifyContent: 'center',
@@ -136,7 +136,7 @@ export default function RootNavigator() {
                       ...shadows.card,
                     }}
                   >
-                    <Icon name="settings" size={21} color={colors.text} />
+                    <Icon name="settings" size={24} color={colors.text} strokeWidth={2.05} />
                   </Pressable>
                 ),
               })}
