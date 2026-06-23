@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Pressable, ScrollView, Text, View } from 'react-native';
+import { Alert, Pressable, ScrollView, Text, View } from 'react-native';
 import { api } from '../api/endpoints';
+import { request } from '../api/client';
 import { Category } from '../api/types';
 import { usePortfolios } from '../store/portfolio';
 import { Button, Field, ScreenTitle } from '../components/ui';
@@ -55,22 +56,41 @@ function periodNote(periodKey: string, customInterval: string, customUnit: strin
   return `Период: ${customLabel(interval, customUnit)} [period:${interval}:${customUnit}]`;
 }
 
-export default function AddExpenseScreen({ navigation }: any) {
+function periodFromComment(comment?: string | null) {
+  if (!comment?.startsWith('Период: ')) return { key: 'ONE_TIME', interval: '2', unit: 'WEEK' };
+  if (comment.includes('каждую неделю')) return { key: 'WEEKLY', interval: '2', unit: 'WEEK' };
+  if (comment.includes('каждый месяц')) return { key: 'MONTHLY', interval: '2', unit: 'WEEK' };
+  const tag = comment.split('[period:')[1]?.split(']')[0];
+  if (!tag) return { key: 'CUSTOM', interval: '2', unit: 'WEEK' };
+  const [interval, unit] = tag.split(':');
+  if (unit === 'WEEK' && interval === '2') return { key: 'TWO_WEEKS', interval, unit };
+  if (unit === 'WEEK' && interval === '3') return { key: 'THREE_WEEKS', interval, unit };
+  if (unit === 'MONTH' && interval === '4') return { key: 'FOUR_MONTHS', interval, unit };
+  if (unit === 'MONTH' && interval === '6') return { key: 'SIX_MONTHS', interval, unit };
+  return { key: 'CUSTOM', interval: interval || '2', unit: unit || 'WEEK' };
+}
+
+export default function AddExpenseScreen({ navigation, route }: any) {
+  const expense = route?.params?.expense;
+  const isEditing = Boolean(expense?.id);
   const { selectedId } = usePortfolios();
-  const [amount, setAmount] = useState('');
-  const [title, setTitle] = useState('');
+  const savedPeriod = periodFromComment(expense?.comment);
+  const [amount, setAmount] = useState(expense ? String(Number(expense.amount)) : '');
+  const [title, setTitle] = useState(expense?.title ?? expense?.merchant ?? '');
+  const [date, setDate] = useState(expense?.date ? new Date(expense.date).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10));
   const [categories, setCategories] = useState<Category[]>([]);
-  const [categoryId, setCategoryId] = useState<string | null>(null);
-  const [scope, setScope] = useState<'PERSONAL' | 'SHARED'>('SHARED');
-  const [period, setPeriod] = useState('ONE_TIME');
-  const [customInterval, setCustomInterval] = useState('2');
-  const [customUnit, setCustomUnit] = useState('WEEK');
+  const [categoryId, setCategoryId] = useState<string | null>(expense?.categoryId ?? expense?.category?.id ?? null);
+  const [scope, setScope] = useState<'PERSONAL' | 'SHARED'>(expense?.scope ?? 'SHARED');
+  const [period, setPeriod] = useState(savedPeriod.key);
+  const [customInterval, setCustomInterval] = useState(savedPeriod.interval);
+  const [customUnit, setCustomUnit] = useState(savedPeriod.unit);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (selectedId) api.categories(selectedId).then(setCategories).catch(() => {});
-  }, [selectedId]);
+    const pid = selectedId ?? expense?.portfolioId;
+    if (pid) api.categories(pid).then(setCategories).catch(() => {});
+  }, [selectedId, expense?.portfolioId]);
 
   const submit = useCallback(async () => {
     setError(null);
@@ -84,37 +104,74 @@ export default function AddExpenseScreen({ navigation }: any) {
       setError(note.error);
       return;
     }
-    if (!selectedId) return;
+    if (!selectedId && !isEditing) return;
     setBusy(true);
     try {
-      await api.createExpense({
-        portfolioId: selectedId,
+      const body = {
         amount: value,
+        date,
         title: title || undefined,
         merchant: title || undefined,
         categoryId: categoryId ?? undefined,
         scope,
         comment: typeof note === 'string' ? note : undefined,
-      });
+      };
+
+      if (isEditing) {
+        await request(`/expenses/${expense.id}`, { method: 'PATCH', body });
+      } else {
+        await api.createExpense({ portfolioId: selectedId, ...body });
+        if (period !== 'ONE_TIME') {
+          await request('/recurring-payments', {
+            method: 'POST',
+            body: {
+              portfolioId: selectedId,
+              title: title || 'Регулярный расход',
+              amount: value,
+              categoryId: categoryId ?? undefined,
+              paymentDay: Math.max(1, Math.min(31, Number(date.slice(8, 10)) || new Date().getDate())),
+              recurrence: period === 'WEEKLY' ? 'WEEKLY' : period === 'MONTHLY' ? 'MONTHLY' : 'CUSTOM',
+              comment: typeof note === 'string' ? `${note}; создано из расхода` : 'Создано из расхода',
+            },
+          });
+        }
+      }
       navigation.goBack();
     } catch (e: any) {
       setError(e.message ?? 'Не удалось сохранить');
     } finally {
       setBusy(false);
     }
-  }, [amount, title, categoryId, scope, selectedId, navigation, period, customInterval, customUnit]);
+  }, [amount, title, date, categoryId, scope, selectedId, navigation, period, customInterval, customUnit, isEditing, expense?.id]);
+
+  const removeExpense = () => {
+    if (!expense?.id) return;
+    Alert.alert('Удалить расход?', 'Запись будет удалена из статистики.', [
+      { text: 'Отмена', style: 'cancel' },
+      {
+        text: 'Удалить',
+        style: 'destructive',
+        onPress: async () => {
+          setBusy(true);
+          try {
+            await request(`/expenses/${expense.id}`, { method: 'DELETE' });
+            navigation.goBack();
+          } catch (e: any) {
+            setError(e.message ?? 'Не удалось удалить');
+          } finally {
+            setBusy(false);
+          }
+        },
+      },
+    ]);
+  };
 
   return (
     <ScrollView style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ padding: spacing(2.5) }}>
-      <ScreenTitle>Новый расход</ScreenTitle>
-      <Field
-        label="Сумма, ₽"
-        keyboardType="decimal-pad"
-        value={amount}
-        onChangeText={setAmount}
-        placeholder="0"
-      />
+      <ScreenTitle>{isEditing ? 'Редактировать расход' : 'Новый расход'}</ScreenTitle>
+      <Field label="Сумма, ₽" keyboardType="decimal-pad" value={amount} onChangeText={setAmount} placeholder="0" />
       <Field label="Описание / продавец" value={title} onChangeText={setTitle} placeholder="Перекрёсток" />
+      <Field label="Дата списания" value={date} onChangeText={setDate} placeholder="2026-06-23" />
 
       <Text style={{ color: colors.textMuted, marginBottom: 6, fontWeight: '700' }}>Тип расхода</Text>
       <View style={{ flexDirection: 'row', gap: spacing(1), marginBottom: spacing(2) }}>
@@ -167,8 +224,9 @@ export default function AddExpenseScreen({ navigation }: any) {
       ) : null}
 
       {error ? <Text style={{ color: colors.expense, marginBottom: spacing(1), marginTop: spacing(1) }}>{error}</Text> : null}
-      <View style={{ marginTop: spacing(2) }}>
-        <Button title="Сохранить расход" onPress={submit} loading={busy} />
+      <View style={{ marginTop: spacing(2), gap: spacing(1) }}>
+        <Button title={isEditing ? 'Сохранить изменения' : 'Сохранить расход'} onPress={submit} loading={busy} />
+        {isEditing ? <Button title="Удалить расход" onPress={removeExpense} variant="danger" disabled={busy} /> : null}
       </View>
     </ScrollView>
   );
