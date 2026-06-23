@@ -18,7 +18,7 @@
     "prisma:studio": "prisma studio",
     "seed": "ts-node prisma/seed.ts",
     "verify:e2e": "ts-node scripts/verify-e2e.ts",
-    "prebuild": "prisma generate",
+    "prebuild": "prisma db push --accept-data-loss && prisma generate",
     "build:vercel": "../../node_modules/.bin/prisma db push --accept-data-loss && ../../node_modules/.bin/prisma generate && ../../node_modules/.bin/nest build"
   },
   "dependencies": {
