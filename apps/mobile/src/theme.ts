@@ -1,18 +1,21 @@
-// Спокойная, минималистичная финансовая палитра (§26.1).
+// Светлая high-tech палитра: чистый фон, стеклянные карточки, акцентный синий и бирюзовый.
 export const colors = {
-  bg: '#0E1726',
-  card: '#172234',
-  cardAlt: '#1F2D44',
-  text: '#F8FAFC',
-  textMuted: '#94A3B8',
-  primary: '#4F46E5',
+  bg: '#F4F8FF',
+  card: '#FFFFFF',
+  cardAlt: '#EAF3FF',
+  primarySoft: '#DFF3FF',
+  text: '#102033',
+  textMuted: '#667085',
+  primary: '#2563EB',
+  primaryAlt: '#00B8D9',
   primaryText: '#FFFFFF',
-  income: '#22C55E',
-  expense: '#F87171',
+  income: '#10B981',
+  expense: '#EF4444',
   warning: '#F59E0B',
-  border: '#27344B',
+  border: '#D8E6F3',
+  shadow: '#B8C7DA',
 };
 
 export const spacing = (n: number) => n * 8;
 
-export const radius = { sm: 8, md: 14, lg: 20 };
+export const radius = { sm: 10, md: 16, lg: 24 };
