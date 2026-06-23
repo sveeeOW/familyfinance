@@ -20,6 +20,7 @@ import { TelegramModule } from './telegram/telegram.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { QueueModule } from './queue/queue.module';
 import { StorageModule } from './storage/storage.module';
+import { HealthController } from './health.controller';
 
 @Module({
   imports: [
@@ -45,5 +46,6 @@ import { StorageModule } from './storage/storage.module';
     NotificationsModule,
     QueueModule,
   ],
+  controllers: [HealthController],
 })
 export class AppModule {}
