@@ -1,10 +1,10 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { Alert, FlatList, Pressable, Text, View } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { api } from '../api/endpoints';
 import { request } from '../api/client';
 import { usePortfolios } from '../store/portfolio';
-import { Card, ScreenTitle } from '../components/ui';
+import { Card, IconBubble, ScreenTitle, SegmentedControl, appFont } from '../components/ui';
 import { PortfolioPicker } from '../components/PortfolioPicker';
 import { colors, radius, spacing } from '../theme';
 
@@ -54,6 +54,8 @@ function periodLabel(item: any) {
 export default function IncomesScreen({ navigation }: any) {
   const { selectedId } = usePortfolios();
   const [items, setItems] = useState<any[]>([]);
+  const [periodMode, setPeriodMode] = useState<'MONTH' | 'YEAR'>('MONTH');
+  const [portfolioMode, setPortfolioMode] = useState<'SHARED' | 'PERSONAL'>('SHARED');
   const [removingId, setRemovingId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -66,6 +68,8 @@ export default function IncomesScreen({ navigation }: any) {
   }, [selectedId]);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
+
+  const total = useMemo(() => items.reduce((sum, item) => sum + Number(item.amount), 0), [items]);
 
   const removeIncome = (item: any) => {
     Alert.alert('Удалить доход?', 'Запись будет удалена из портфеля.', [
@@ -88,89 +92,95 @@ export default function IncomesScreen({ navigation }: any) {
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg, padding: spacing(2.5) }}>
-      <ScreenTitle>Доходы</ScreenTitle>
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: spacing(1.5) }}>
+        <ScreenTitle subtitle="Расписание выплат">Доходы</ScreenTitle>
+        <Pressable
+          onPress={() => navigation.navigate('AddIncome')}
+          style={({ pressed }) => [
+            {
+              height: 42,
+              paddingHorizontal: spacing(1.5),
+              borderRadius: radius.pill,
+              backgroundColor: colors.accent,
+              justifyContent: 'center',
+            },
+            pressed && { opacity: 0.86 },
+          ]}
+        >
+          <Text style={{ color: colors.accentText, fontFamily: appFont, fontWeight: '600' }}>+ Добавить</Text>
+        </Pressable>
+      </View>
+
+      <View style={{ gap: spacing(1), marginBottom: spacing(1.5) }}>
+        <SegmentedControl
+          value={portfolioMode}
+          onChange={setPortfolioMode}
+          options={[
+            { label: 'Общий', value: 'SHARED' },
+            { label: 'Личный', value: 'PERSONAL' },
+          ]}
+        />
+        <SegmentedControl
+          value={periodMode}
+          onChange={setPeriodMode}
+          options={[
+            { label: 'Месяц', value: 'MONTH' },
+            { label: 'Год', value: 'YEAR' },
+          ]}
+        />
+      </View>
       <PortfolioPicker />
+
+      <Card style={{ marginBottom: spacing(1.5) }}>
+        <Text style={{ color: colors.textMuted, fontFamily: appFont, fontSize: 13 }}>Плановые доходы · {periodMode === 'MONTH' ? 'месяц' : 'год'}</Text>
+        <Text style={{ color: colors.income, fontFamily: appFont, fontSize: 30, fontWeight: '600', marginTop: 6 }}>
+          +{new Intl.NumberFormat('ru-RU').format(periodMode === 'YEAR' ? total * 12 : total)} ₽
+        </Text>
+      </Card>
+
       <FlatList
         data={items}
         keyExtractor={(i) => i.id}
-        style={{ marginTop: spacing(1) }}
-        contentContainerStyle={{ paddingBottom: spacing(10) }}
-        ListEmptyComponent={<Text style={{ color: colors.textMuted, marginTop: spacing(2) }}>Доходов пока нет.</Text>}
+        contentContainerStyle={{ paddingBottom: spacing(12) }}
+        ListEmptyComponent={<Text style={{ color: colors.textMuted, marginTop: spacing(2), fontFamily: appFont }}>Доходов пока нет.</Text>}
         renderItem={({ item }) => {
           const period = periodLabel(item);
           return (
             <Card style={{ marginBottom: spacing(1.25) }}>
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: spacing(1.5) }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing(1.5) }}>
+                <IconBubble name="income" color={colors.income} bg={colors.mintSoft} />
                 <View style={{ flex: 1 }}>
-                  <Text style={{ color: colors.text, fontWeight: '900', fontSize: 16 }}>
+                  <Text style={{ color: colors.text, fontFamily: appFont, fontWeight: '600', fontSize: 16 }}>
                     {INCOME_TYPE[item.type] ?? item.type}
                   </Text>
-                  <Text style={{ color: colors.textMuted, fontSize: 12, marginTop: 4 }}>
-                    {item.user?.name ? `${item.user.name} · ` : ''}
-                    {new Date(item.date).toLocaleDateString('ru-RU')}
+                  <Text style={{ color: colors.textMuted, fontFamily: appFont, fontSize: 12, marginTop: 4 }}>
+                    Ближайшая: {new Date(item.date).toLocaleDateString('ru-RU')}
                     {period ? ` · ${period}` : ''}
                   </Text>
                 </View>
-                <Text style={{ color: colors.income, fontWeight: '900', fontSize: 17 }}>
+                <Text style={{ color: colors.income, fontFamily: appFont, fontWeight: '600', fontSize: 16 }}>
                   +{new Intl.NumberFormat('ru-RU').format(Number(item.amount))} ₽
                 </Text>
               </View>
               <View style={{ flexDirection: 'row', gap: spacing(1), marginTop: spacing(1.5) }}>
                 <Pressable
                   onPress={() => navigation.navigate('AddIncome', { income: item })}
-                  style={{
-                    flex: 1,
-                    paddingVertical: spacing(1),
-                    borderRadius: radius.md,
-                    alignItems: 'center',
-                    backgroundColor: colors.primarySoft,
-                    borderWidth: 1,
-                    borderColor: colors.border,
-                  }}
+                  style={{ flex: 1, paddingVertical: spacing(1), borderRadius: radius.pill, alignItems: 'center', backgroundColor: colors.primarySoft }}
                 >
-                  <Text style={{ color: colors.primary, fontWeight: '800' }}>Изменить</Text>
+                  <Text style={{ color: colors.primary, fontFamily: appFont, fontWeight: '500' }}>Изменить</Text>
                 </Pressable>
                 <Pressable
                   onPress={() => removeIncome(item)}
                   disabled={removingId === item.id}
-                  style={{
-                    flex: 1,
-                    paddingVertical: spacing(1),
-                    borderRadius: radius.md,
-                    alignItems: 'center',
-                    backgroundColor: '#FEE2E2',
-                    borderWidth: 1,
-                    borderColor: '#FECACA',
-                    opacity: removingId === item.id ? 0.6 : 1,
-                  }}
+                  style={{ flex: 1, paddingVertical: spacing(1), borderRadius: radius.pill, alignItems: 'center', backgroundColor: colors.redSoft, opacity: removingId === item.id ? 0.6 : 1 }}
                 >
-                  <Text style={{ color: colors.expense, fontWeight: '800' }}>Удалить</Text>
+                  <Text style={{ color: colors.expense, fontFamily: appFont, fontWeight: '500' }}>Удалить</Text>
                 </Pressable>
               </View>
             </Card>
           );
         }}
       />
-      <Pressable style={fabStyle} onPress={() => navigation.navigate('AddIncome')}>
-        <Text style={{ color: '#fff', fontSize: 28, marginTop: -2 }}>＋</Text>
-      </Pressable>
     </View>
   );
 }
-
-const fabStyle = {
-  position: 'absolute' as const,
-  right: spacing(3),
-  bottom: spacing(3),
-  width: 60,
-  height: 60,
-  borderRadius: 30,
-  backgroundColor: colors.income,
-  alignItems: 'center' as const,
-  justifyContent: 'center' as const,
-  shadowColor: colors.income,
-  shadowOpacity: 0.28,
-  shadowRadius: 16,
-  shadowOffset: { width: 0, height: 8 },
-  elevation: 4,
-};
