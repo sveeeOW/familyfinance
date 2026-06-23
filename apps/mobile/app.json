@@ -28,7 +28,7 @@
       ]
     ],
     "extra": {
-      "apiUrl": "http://localhost:3000"
+      "apiUrl": "https://familyfinance-application.vercel.app"
     },
     "icon": "./public/icon-512.png",
     "web": {
