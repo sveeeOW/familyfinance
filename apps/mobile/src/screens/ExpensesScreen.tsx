@@ -7,6 +7,7 @@ import { usePortfolios } from '../store/portfolio';
 import { Card, IconBubble, ScreenTitle, SegmentedControl, appFont } from '../components/ui';
 import { PortfolioPicker } from '../components/PortfolioPicker';
 import { colors, radius, spacing } from '../theme';
+import { countOccurrences, getPeriodRange, scheduledAmount } from '../utils/schedule';
 
 const STATUS_LABEL: Record<Expense['status'], { text: string; color: string }> = {
   CONFIRMED: { text: '', color: colors.textMuted },
@@ -19,13 +20,6 @@ function periodLabel(item: any) {
   if (typeof item.comment !== 'string') return null;
   if (!item.comment.startsWith('Период: ')) return null;
   return item.comment.replace('Период: ', '').split(' [')[0];
-}
-
-function currentRange(periodMode: 'MONTH' | 'YEAR') {
-  const now = new Date();
-  const start = periodMode === 'YEAR' ? new Date(now.getFullYear(), 0, 1) : new Date(now.getFullYear(), now.getMonth(), 1);
-  const end = periodMode === 'YEAR' ? new Date(now.getFullYear() + 1, 0, 1) : new Date(now.getFullYear(), now.getMonth() + 1, 1);
-  return { start, end };
 }
 
 export default function ExpensesScreen({ navigation }: any) {
@@ -45,17 +39,33 @@ export default function ExpensesScreen({ navigation }: any) {
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
-  const filteredItems = useMemo(() => {
-    const { start, end } = currentRange(periodMode);
-    return items.filter((item) => {
-      const date = new Date(item.date);
-      const inRange = date >= start && date < end;
-      const scope = item.scope ?? 'SHARED';
-      return inRange && scope === portfolioMode;
-    });
-  }, [items, periodMode, portfolioMode]);
+  const { start, end } = useMemo(() => getPeriodRange(periodMode), [periodMode]);
 
-  const total = useMemo(() => filteredItems.reduce((sum, item) => sum + Number(item.amount), 0), [filteredItems]);
+  const filteredItems = useMemo(() => {
+    return items.filter((item) => {
+      const scope = item.scope ?? 'SHARED';
+      const occurrences = countOccurrences({
+        startDate: item.date,
+        recurrence: item.comment?.includes('[period:') ? 'CUSTOM' : 'ONE_TIME',
+        marker: item.comment,
+        rangeStart: start,
+        rangeEnd: end,
+      });
+      return occurrences > 0 && scope === portfolioMode;
+    });
+  }, [items, start, end, portfolioMode]);
+
+  const total = useMemo(
+    () => filteredItems.reduce((sum, item) => sum + scheduledAmount({
+      amount: item.amount,
+      startDate: item.date,
+      recurrence: item.comment?.includes('[period:') ? 'CUSTOM' : 'ONE_TIME',
+      marker: item.comment,
+      rangeStart: start,
+      rangeEnd: end,
+    }), 0),
+    [filteredItems, start, end],
+  );
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg, padding: spacing(2.5) }}>
@@ -101,7 +111,7 @@ export default function ExpensesScreen({ navigation }: any) {
       <Card style={{ marginBottom: spacing(1.5) }}>
         <Text style={{ color: colors.textMuted, fontFamily: appFont, fontSize: 13 }}>Расходы · {portfolioMode === 'SHARED' ? 'общие' : 'личные'} · {periodMode === 'MONTH' ? 'месяц' : 'год'}</Text>
         <Text style={{ color: colors.expense, fontFamily: appFont, fontSize: 30, fontWeight: '600', marginTop: 6 }}>
-          −{new Intl.NumberFormat('ru-RU').format(total)} ₽
+          −{new Intl.NumberFormat('ru-RU').format(Math.round(total))} ₽
         </Text>
       </Card>
 
@@ -109,10 +119,18 @@ export default function ExpensesScreen({ navigation }: any) {
         data={filteredItems}
         keyExtractor={(i) => i.id}
         contentContainerStyle={{ paddingBottom: spacing(12) }}
-        ListEmptyComponent={<Text style={{ color: colors.textMuted, marginTop: spacing(2), fontFamily: appFont }}>Расходов пока нет.</Text>}
+        ListEmptyComponent={<Text style={{ color: colors.textMuted, marginTop: spacing(2), fontFamily: appFont }}>Расходов в выбранном периоде пока нет.</Text>}
         renderItem={({ item }) => {
           const status = STATUS_LABEL[item.status];
           const period = periodLabel(item);
+          const occurrenceCount = countOccurrences({
+            startDate: item.date,
+            recurrence: item.comment?.includes('[period:') ? 'CUSTOM' : 'ONE_TIME',
+            marker: item.comment,
+            rangeStart: start,
+            rangeEnd: end,
+          });
+          const periodAmount = Number(item.amount) * occurrenceCount;
           return (
             <Card style={{ marginBottom: spacing(1.25) }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing(1.5) }}>
@@ -125,10 +143,11 @@ export default function ExpensesScreen({ navigation }: any) {
                     {item.category?.name ?? 'Без категории'} · {new Date(item.date).toLocaleDateString('ru-RU')}
                     {status.text ? ` · ${status.text}` : ''}
                     {period ? ` · ${period}` : ''}
+                    {periodMode === 'YEAR' && occurrenceCount > 1 ? ` · ${occurrenceCount} раз` : ''}
                   </Text>
                 </View>
                 <Text style={{ color: colors.expense, fontFamily: appFont, fontWeight: '600', fontSize: 16 }}>
-                  −{new Intl.NumberFormat('ru-RU').format(Number(item.amount))} ₽
+                  −{new Intl.NumberFormat('ru-RU').format(Math.round(periodMode === 'YEAR' ? periodAmount : Number(item.amount)))} ₽
                 </Text>
               </View>
               <View style={{ flexDirection: 'row', gap: spacing(1), marginTop: spacing(1.5) }}>
