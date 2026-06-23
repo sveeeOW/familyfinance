@@ -25,7 +25,7 @@ export class TelegramController {
       // Поэтому логируем ошибку, но всегда подтверждаем получение webhook.
       this.logger.error(`Telegram webhook error: ${(error as Error).message}`, (error as Error).stack);
     }
-    return { ok: true };
+    return { ok: true, received: true };
   }
 
   /** Сгенерировать код привязки бота (Настройки → Telegram-бот, §10.2). */
