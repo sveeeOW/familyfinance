@@ -2,10 +2,12 @@ import Constants from 'expo-constants';
 import { secureStorage } from './storage';
 import { AuthTokens } from './types';
 
+const PRODUCTION_API_URL = 'https://familyfinance-application.vercel.app';
+
 const API_URL =
   process.env.EXPO_PUBLIC_API_URL ??
   (Constants.expoConfig?.extra as any)?.apiUrl ??
-  'http://localhost:3000';
+  PRODUCTION_API_URL;
 
 const TOKENS_KEY = 'ff.tokens';
 
