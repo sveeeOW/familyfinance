@@ -4,9 +4,9 @@ import { useFocusEffect } from '@react-navigation/native';
 import { api } from '../api/endpoints';
 import { AnalyticsSummary } from '../api/types';
 import { usePortfolios } from '../store/portfolio';
-import { Button, Card, Money, ScreenTitle } from '../components/ui';
+import { Button, Card, Chip, Money, ScreenTitle, SearchField, SoftCard } from '../components/ui';
 import { PortfolioPicker } from '../components/PortfolioPicker';
-import { colors, spacing } from '../theme';
+import { colors, radius, spacing } from '../theme';
 
 export default function DashboardScreen({ navigation }: any) {
   const { selectedId, load: loadPortfolios } = usePortfolios();
@@ -27,7 +27,7 @@ export default function DashboardScreen({ navigation }: any) {
       setForecast(f);
       setClarifyCount(c.length);
     } catch {
-      // молча — экран покажет пустое состояние
+      // экран покажет пустое состояние
     }
   }, [selectedId]);
 
@@ -43,103 +43,156 @@ export default function DashboardScreen({ navigation }: any) {
     setRefreshing(false);
   };
 
+  const expense = summary?.totalExpense ?? 0;
+  const income = summary?.totalIncome ?? 0;
+  const balance = summary?.balance ?? 0;
+  const freeMoney = summary?.freeMoney ?? 0;
+  const obligatory = summary?.obligatoryTotal ?? 0;
+
   return (
     <ScrollView
       style={{ flex: 1, backgroundColor: colors.bg }}
-      contentContainerStyle={{ padding: spacing(2.5) }}
-      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.text} />}
+      contentContainerStyle={{ paddingHorizontal: spacing(2.5), paddingBottom: spacing(12) }}
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />}
     >
-      <ScreenTitle>Главная</ScreenTitle>
-      <PortfolioPicker />
-
-      <Card style={{ marginTop: spacing(1.5) }}>
-        <Row label="Доход за месяц" value={<Money value={summary?.totalIncome ?? 0} tone="income" />} />
-        <Divider />
-        <Row label="Расход за месяц" value={<Money value={summary?.totalExpense ?? 0} tone="expense" />} />
-        <Divider />
-        <Row label="Остаток" value={<Money value={summary?.balance ?? 0} />} />
-      </Card>
-
-      <View style={{ flexDirection: 'row', gap: spacing(1.5), marginTop: spacing(1.5) }}>
-        <Card style={{ flex: 1 }}>
-          <Text style={labelStyle}>Свободно до конца месяца</Text>
-          <Money value={summary?.freeMoney ?? 0} />
-        </Card>
-        <Card style={{ flex: 1 }}>
-          <Text style={labelStyle}>Обязательные платежи</Text>
-          <Money value={summary?.obligatoryTotal ?? 0} />
-        </Card>
-      </View>
-
-      {/* Быстрые действия (§14.2) */}
-      <View style={{ flexDirection: 'row', gap: spacing(1.5), marginTop: spacing(1.5) }}>
-        <View style={{ flex: 1 }}>
-          <Button title="＋ Расход" onPress={() => navigation.navigate('AddExpense')} />
-        </View>
-        <View style={{ flex: 1 }}>
-          <Button title="📷 Сканировать чек" variant="ghost" onPress={() => navigation.navigate('ScanReceipt')} />
-        </View>
-      </View>
-
-      {forecast ? (
-        <Card style={{ marginTop: spacing(1.5) }}>
-          <Text style={labelStyle}>Прогноз остатка на конец месяца</Text>
-          <Money value={forecast.endOfMonthBalance ?? 0} />
-          <Text style={{ color: colors.textMuted, marginTop: 4, fontSize: 12 }}>
-            3 мес: {fmt(forecast.forecast?.in3Months)} · 6 мес: {fmt(forecast.forecast?.in6Months)}
-          </Text>
-        </Card>
-      ) : null}
-
-      {clarifyCount > 0 ? (
-        <Pressable onPress={() => navigation.navigate('Clarification')}>
-          <Card style={{ marginTop: spacing(1.5), borderColor: colors.warning }}>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-              <Text style={{ color: colors.warning, fontWeight: '700' }}>
-                Требует уточнения: {clarifyCount}
-              </Text>
-              <Text style={{ color: colors.warning, fontSize: 18 }}>›</Text>
-            </View>
-            <Text style={{ color: colors.textMuted, marginTop: 4 }}>
-              Расходы, которые бот или AI не смогли точно определить.
-            </Text>
-          </Card>
-        </Pressable>
-      ) : null}
-
-      <Text style={[labelStyle, { marginTop: spacing(2.5), marginBottom: spacing(1) }]}>Расходы по категориям</Text>
-      {summary?.byCategory?.length ? (
-        summary.byCategory.slice(0, 8).map((c) => (
-          <View
-            key={c.id}
-            style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: spacing(1) }}
+      <View style={{ paddingTop: spacing(1) }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: spacing(1) }}>
+          <ScreenTitle>Евгений</ScreenTitle>
+          <Pressable
+            onPress={() => navigation.navigate('Settings')}
+            style={{
+              backgroundColor: '#8A2BEF',
+              borderRadius: radius.xl,
+              paddingHorizontal: spacing(1.6),
+              paddingVertical: spacing(1),
+            }}
           >
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing(1) }}>
-              <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: c.color ?? colors.primary }} />
-              <Text style={{ color: colors.text }}>{c.name}</Text>
+            <Text style={{ color: '#fff', fontWeight: '900' }}>🎁 Бонус</Text>
+          </Pressable>
+        </View>
+
+        <SearchField />
+        <PortfolioPicker />
+
+        <View style={{ flexDirection: 'row', gap: spacing(1), marginBottom: spacing(1.5) }}>
+          <Chip label="Июнь" active />
+          <Chip label="Счета и карты" />
+          <Chip label="Без переводов" />
+        </View>
+
+        <Card style={{ marginBottom: spacing(1.5) }}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+            <View>
+              <Money value={expense} size={38} />
+              <Text style={{ color: colors.text, fontSize: 17, marginTop: 2 }}>Траты</Text>
             </View>
-            <Text style={{ color: colors.text, fontWeight: '600' }}>{fmt(c.amount)}</Text>
+            <Text style={{ color: colors.textSubtle, fontSize: 28 }}>×</Text>
           </View>
-        ))
-      ) : (
-        <Text style={{ color: colors.textMuted }}>Пока нет расходов в этом месяце.</Text>
-      )}
+
+          <View style={{ height: 96, flexDirection: 'row', alignItems: 'flex-end', gap: spacing(1.2), marginTop: spacing(3) }}>
+            {[0.08, 0.18, 0.84, 0.12, 0.46, 0.38, 0.04].map((height, idx) => (
+              <View
+                key={idx}
+                style={{
+                  flex: 1,
+                  height: Math.max(8, 96 * height),
+                  borderRadius: 12,
+                  backgroundColor: idx === 2 ? colors.primary : '#DDE4EE',
+                }}
+              />
+            ))}
+          </View>
+
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: spacing(0.8), marginTop: spacing(2.5) }}>
+            {summary?.byCategory?.slice(0, 6).map((c) => (
+              <View key={c.id} style={{ backgroundColor: colors.primarySoft, borderRadius: radius.xl, paddingHorizontal: spacing(1.1), paddingVertical: spacing(0.65) }}>
+                <Text style={{ color: colors.textMuted, fontWeight: '800', fontSize: 12 }}>
+                  {c.name} {fmt(c.amount)}
+                </Text>
+              </View>
+            ))}
+          </View>
+        </Card>
+
+        <View style={{ flexDirection: 'row', gap: spacing(1.5), marginBottom: spacing(1.5) }}>
+          <Card style={{ flex: 1 }}>
+            <Text style={cardLabel}>Доходы</Text>
+            <Money value={income} tone="income" size={22} />
+          </Card>
+          <Card style={{ flex: 1 }}>
+            <Text style={cardLabel}>Остаток</Text>
+            <Money value={balance} size={22} />
+          </Card>
+        </View>
+
+        <View style={{ flexDirection: 'row', gap: spacing(1), marginBottom: spacing(2) }}>
+          <QuickAction icon="→" label="Расход" onPress={() => navigation.navigate('AddExpense')} />
+          <QuickAction icon="+" label="Доход" onPress={() => navigation.navigate('AddIncome')} />
+          <QuickAction icon="▣" label="Чек" onPress={() => navigation.navigate('ScanReceipt')} />
+          <QuickAction icon="•••" label="Ещё" onPress={() => navigation.navigate('Settings')} />
+        </View>
+
+        {clarifyCount > 0 ? (
+          <Pressable onPress={() => navigation.navigate('Clarification')}>
+            <SoftCard style={{ marginBottom: spacing(1.5), flexDirection: 'row', alignItems: 'center', gap: spacing(1.5) }}>
+              <View style={iconCircle('#FFF0D6')}><Text style={{ fontSize: 20 }}>?</Text></View>
+              <View style={{ flex: 1 }}>
+                <Text style={{ color: colors.text, fontWeight: '900', fontSize: 17 }}>Есть расходы для проверки</Text>
+                <Text style={{ color: colors.textMuted, marginTop: 3 }}>{clarifyCount} операций требуют уточнения</Text>
+              </View>
+              <Text style={{ color: colors.textMuted, fontSize: 24 }}>›</Text>
+            </SoftCard>
+          </Pressable>
+        ) : null}
+
+        <Text style={{ color: colors.text, fontSize: 26, fontWeight: '900', marginBottom: spacing(1.25), letterSpacing: -0.6 }}>Финздоровье</Text>
+        <SoftCard style={{ marginBottom: spacing(1.25) }}>
+          <MetricRow title="Свободно до конца месяца" value={fmt(freeMoney)} status={freeMoney >= 0 ? 'Уже неплохо' : 'Нужна осторожность'} />
+        </SoftCard>
+        <SoftCard style={{ marginBottom: spacing(1.25) }}>
+          <MetricRow title="Обязательные платежи" value={fmt(obligatory)} status="Под контролем" />
+        </SoftCard>
+        {forecast ? (
+          <SoftCard>
+            <MetricRow title="Прогноз на 3 месяца" value={fmt(forecast.forecast?.in3Months)} status="Планируем заранее" />
+          </SoftCard>
+        ) : null}
+      </View>
     </ScrollView>
   );
 }
 
-function Row({ label, value }: { label: string; value: React.ReactNode }) {
+function QuickAction({ icon, label, onPress }: { icon: string; label: string; onPress: () => void }) {
   return (
-    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-      <Text style={{ color: colors.textMuted }}>{label}</Text>
-      {value}
+    <Pressable onPress={onPress} style={{ flex: 1, alignItems: 'center' }}>
+      <View style={{ width: '100%', height: 58, borderRadius: radius.lg, backgroundColor: colors.card, alignItems: 'center', justifyContent: 'center' }}>
+        <Text style={{ color: colors.primary, fontSize: 25, fontWeight: '900' }}>{icon}</Text>
+      </View>
+      <Text style={{ color: colors.text, textAlign: 'center', fontSize: 12, marginTop: 6, fontWeight: '700' }}>{label}</Text>
+    </Pressable>
+  );
+}
+
+function MetricRow({ title, value, status }: { title: string; value: string; status: string }) {
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+      <View style={{ flex: 1 }}>
+        <Text style={{ color: colors.text, fontWeight: '900', fontSize: 19 }}>{value}</Text>
+        <Text style={{ color: colors.text, fontWeight: '800', fontSize: 17, marginTop: 2 }}>{title}</Text>
+        <View style={{ backgroundColor: '#E6F8E9', borderRadius: radius.xl, alignSelf: 'flex-start', marginTop: spacing(1), paddingHorizontal: spacing(1), paddingVertical: spacing(0.45) }}>
+          <Text style={{ color: colors.income, fontWeight: '900', fontSize: 12 }}>{status}</Text>
+        </View>
+      </View>
+      <View style={{ width: 58, height: 48, alignItems: 'center', justifyContent: 'center' }}>
+        <Text style={{ color: colors.textSubtle, fontSize: 30 }}>▥</Text>
+      </View>
     </View>
   );
 }
 
-function Divider() {
-  return <View style={{ height: 1, backgroundColor: colors.border, marginVertical: spacing(1.25) }} />;
+function iconCircle(bg: string) {
+  return { width: 52, height: 52, borderRadius: 26, backgroundColor: bg, alignItems: 'center' as const, justifyContent: 'center' as const };
 }
 
-const labelStyle = { color: colors.textMuted, fontSize: 13, marginBottom: 6 } as const;
-const fmt = (n?: number) => new Intl.NumberFormat('ru-RU').format(n ?? 0) + ' ₽';
+const cardLabel = { color: colors.textMuted, fontSize: 15, marginBottom: spacing(0.6), fontWeight: '800' } as const;
+const fmt = (n?: number) => new Intl.NumberFormat('ru-RU').format(Math.round(n ?? 0)) + ' ₽';
