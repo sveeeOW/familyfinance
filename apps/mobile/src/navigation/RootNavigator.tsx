@@ -1,10 +1,11 @@
 import React from 'react';
-import { Pressable, Text } from 'react-native';
+import { Pressable, View } from 'react-native';
 import { NavigationContainer, DefaultTheme } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { useAuth } from '../store/auth';
-import { colors, radius, spacing } from '../theme';
+import { colors, radius, shadows, spacing } from '../theme';
+import { Icon } from '../components/icons';
 
 import LoginScreen from '../screens/LoginScreen';
 import RegisterScreen from '../screens/RegisterScreen';
@@ -38,12 +39,12 @@ const navTheme = {
   },
 };
 
-const TAB_ICON: Record<string, string> = {
-  Главная: '⌁',
-  Расходы: '−',
-  Доходы: '+',
-  Портфели: '□',
-  Аналитика: '◌',
+const TAB_ICON: Record<string, React.ComponentProps<typeof Icon>['name']> = {
+  Главная: 'home',
+  Расходы: 'expense',
+  Доходы: 'income',
+  Портфели: 'wallet',
+  Аналитика: 'analytics',
 };
 
 function MainTabs() {
@@ -52,22 +53,39 @@ function MainTabs() {
       screenOptions={({ route }) => ({
         headerShown: false,
         tabBarStyle: {
+          position: 'absolute',
+          left: spacing(2),
+          right: spacing(2),
+          bottom: spacing(1.5),
+          height: 76,
           backgroundColor: colors.card,
-          borderTopColor: colors.border,
-          height: 68,
-          paddingTop: spacing(0.75),
-          paddingBottom: spacing(1),
-          shadowColor: colors.shadow,
-          shadowOpacity: 0.15,
-          shadowRadius: 18,
-          shadowOffset: { width: 0, height: -8 },
-          elevation: 8,
+          borderTopWidth: 0,
+          borderRadius: radius.xl,
+          paddingTop: spacing(1),
+          paddingBottom: spacing(1.1),
+          paddingHorizontal: spacing(0.6),
+          ...shadows.card,
         },
-        tabBarLabelStyle: { fontWeight: '800', fontSize: 11 },
+        tabBarItemStyle: {
+          borderRadius: radius.lg,
+          marginHorizontal: 2,
+        },
+        tabBarLabelStyle: { fontWeight: '900', fontSize: 10, marginTop: 2 },
         tabBarActiveTintColor: colors.primary,
-        tabBarInactiveTintColor: colors.textMuted,
-        tabBarIcon: ({ color }) => (
-          <Text style={{ fontSize: 21, color, fontWeight: '900' }}>{TAB_ICON[route.name] ?? '•'}</Text>
+        tabBarInactiveTintColor: colors.textSubtle,
+        tabBarIcon: ({ color, focused }) => (
+          <View
+            style={{
+              width: 38,
+              height: 34,
+              borderRadius: radius.pill,
+              alignItems: 'center',
+              justifyContent: 'center',
+              backgroundColor: focused ? colors.primarySoft : 'transparent',
+            }}
+          >
+            <Icon name={TAB_ICON[route.name] ?? 'home'} size={21} color={color} strokeWidth={focused ? 2.7 : 2.2} />
+          </View>
         ),
       })}
     >
@@ -90,7 +108,7 @@ export default function RootNavigator() {
           headerStyle: { backgroundColor: colors.bg },
           headerShadowVisible: false,
           headerTintColor: colors.text,
-          headerTitleStyle: { fontWeight: '900' },
+          headerTitleStyle: { fontWeight: '900', letterSpacing: -0.4 },
           contentStyle: { backgroundColor: colors.bg },
         }}
       >
@@ -107,17 +125,18 @@ export default function RootNavigator() {
                     onPress={() => navigation.navigate('Settings')}
                     hitSlop={12}
                     style={{
-                      width: 38,
-                      height: 38,
-                      borderRadius: radius.lg,
+                      width: 42,
+                      height: 42,
+                      borderRadius: radius.pill,
                       alignItems: 'center',
                       justifyContent: 'center',
                       backgroundColor: colors.card,
                       borderWidth: 1,
                       borderColor: colors.border,
+                      ...shadows.card,
                     }}
                   >
-                    <Text style={{ fontSize: 18 }}>⚙️</Text>
+                    <Icon name="settings" size={21} color={colors.text} />
                   </Pressable>
                 ),
               })}
