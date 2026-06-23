@@ -2,6 +2,7 @@ import { Controller, Get } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { PrismaService } from './prisma/prisma.service';
 
+// Health endpoint is used to verify Vercel runtime env and database connectivity.
 function getSafeDatabaseInfo() {
   const raw = process.env.DATABASE_URL;
   if (!raw) return null;
