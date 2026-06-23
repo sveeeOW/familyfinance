@@ -50,6 +50,10 @@ export interface Expense {
   date: string;
   title?: string | null;
   merchant?: string | null;
+  comment?: string | null;
+  categoryId?: string | null;
+  portfolioId?: string | null;
+  scope?: 'PERSONAL' | 'SHARED';
   status: 'CONFIRMED' | 'PENDING' | 'NEEDS_CLARIFICATION' | 'RECOGNITION_ERROR';
   category?: { id: string; name: string; color?: string | null; icon?: string | null } | null;
   paidBy?: { id: string; name: string } | null;
