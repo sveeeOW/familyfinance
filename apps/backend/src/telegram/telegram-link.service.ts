@@ -12,7 +12,7 @@ export class TelegramLinkService {
     await this.prisma.telegramLinkToken.create({
       data: { userId, code, expiresAt: new Date(Date.now() + 30 * 60 * 1000) },
     });
-    const botUsername = process.env.TELEGRAM_BOT_USERNAME ?? 'your_bot';
+    const botUsername = process.env.TELEGRAM_BOT_USERNAME ?? 'familyfinanceapp_bot';
     return {
       code,
       deepLink: `https://t.me/${botUsername}?start=${code}`,
