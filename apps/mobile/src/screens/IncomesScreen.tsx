@@ -7,6 +7,7 @@ import { usePortfolios } from '../store/portfolio';
 import { Card, IconBubble, ScreenTitle, SegmentedControl, appFont } from '../components/ui';
 import { PortfolioPicker } from '../components/PortfolioPicker';
 import { colors, radius, spacing } from '../theme';
+import { countOccurrences, getPeriodRange, scheduledAmount } from '../utils/schedule';
 
 const INCOME_TYPE: Record<string, string> = {
   SALARY: 'Зарплата',
@@ -69,7 +70,30 @@ export default function IncomesScreen({ navigation }: any) {
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
-  const total = useMemo(() => items.reduce((sum, item) => sum + Number(item.amount), 0), [items]);
+  const { start, end } = useMemo(() => getPeriodRange(periodMode), [periodMode]);
+
+  const total = useMemo(
+    () => items.reduce((sum, item) => sum + scheduledAmount({
+      amount: item.amount,
+      startDate: item.date,
+      recurrence: item.recurrence,
+      marker: item.description,
+      rangeStart: start,
+      rangeEnd: end,
+    }), 0),
+    [items, start, end],
+  );
+
+  const visibleItems = useMemo(
+    () => items.filter((item) => countOccurrences({
+      startDate: item.date,
+      recurrence: item.recurrence,
+      marker: item.description,
+      rangeStart: start,
+      rangeEnd: end,
+    }) > 0),
+    [items, start, end],
+  );
 
   const removeIncome = (item: any) => {
     Alert.alert('Удалить доход?', 'Запись будет удалена из портфеля.', [
@@ -134,17 +158,19 @@ export default function IncomesScreen({ navigation }: any) {
       <Card style={{ marginBottom: spacing(1.5) }}>
         <Text style={{ color: colors.textMuted, fontFamily: appFont, fontSize: 13 }}>Плановые доходы · {periodMode === 'MONTH' ? 'месяц' : 'год'}</Text>
         <Text style={{ color: colors.income, fontFamily: appFont, fontSize: 30, fontWeight: '600', marginTop: 6 }}>
-          +{new Intl.NumberFormat('ru-RU').format(periodMode === 'YEAR' ? total * 12 : total)} ₽
+          +{new Intl.NumberFormat('ru-RU').format(Math.round(total))} ₽
         </Text>
       </Card>
 
       <FlatList
-        data={items}
+        data={visibleItems}
         keyExtractor={(i) => i.id}
         contentContainerStyle={{ paddingBottom: spacing(12) }}
-        ListEmptyComponent={<Text style={{ color: colors.textMuted, marginTop: spacing(2), fontFamily: appFont }}>Доходов пока нет.</Text>}
+        ListEmptyComponent={<Text style={{ color: colors.textMuted, marginTop: spacing(2), fontFamily: appFont }}>Доходов в выбранном периоде пока нет.</Text>}
         renderItem={({ item }) => {
           const period = periodLabel(item);
+          const occurrenceCount = countOccurrences({ startDate: item.date, recurrence: item.recurrence, marker: item.description, rangeStart: start, rangeEnd: end });
+          const periodAmount = Number(item.amount) * occurrenceCount;
           return (
             <Card style={{ marginBottom: spacing(1.25) }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing(1.5) }}>
@@ -156,10 +182,11 @@ export default function IncomesScreen({ navigation }: any) {
                   <Text style={{ color: colors.textMuted, fontFamily: appFont, fontSize: 12, marginTop: 4 }}>
                     Ближайшая: {new Date(item.date).toLocaleDateString('ru-RU')}
                     {period ? ` · ${period}` : ''}
+                    {periodMode === 'YEAR' && occurrenceCount > 1 ? ` · ${occurrenceCount} выплат` : ''}
                   </Text>
                 </View>
                 <Text style={{ color: colors.income, fontFamily: appFont, fontWeight: '600', fontSize: 16 }}>
-                  +{new Intl.NumberFormat('ru-RU').format(Number(item.amount))} ₽
+                  +{new Intl.NumberFormat('ru-RU').format(Math.round(periodMode === 'YEAR' ? periodAmount : Number(item.amount)))} ₽
                 </Text>
               </View>
               <View style={{ flexDirection: 'row', gap: spacing(1), marginTop: spacing(1.5) }}>
