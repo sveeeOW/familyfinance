@@ -13,8 +13,15 @@ export default function PortfoliosScreen() {
   const [name, setName] = useState('');
   const [type, setType] = useState<'PERSONAL' | 'SHARED'>('SHARED');
   const [busy, setBusy] = useState(false);
+  const [selectingId, setSelectingId] = useState<string | null>(null);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
+
+  const choosePortfolio = useCallback((portfolioId: string) => {
+    setSelectingId(portfolioId);
+    select(portfolioId);
+    setTimeout(() => setSelectingId(null), 350);
+  }, [select]);
 
   const invite = async (portfolioId: string) => {
     try {
@@ -36,7 +43,7 @@ export default function PortfoliosScreen() {
     try {
       const portfolio = await api.createPortfolio({ name: cleanName, type });
       await load();
-      select(portfolio.id);
+      choosePortfolio(portfolio.id);
       setName('');
       setType('SHARED');
       setIsCreating(false);
@@ -50,7 +57,7 @@ export default function PortfoliosScreen() {
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg, padding: spacing(2.5) }}>
       <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: spacing(1.5) }}>
-        <ScreenTitle subtitle="Личные и общие пространства для учёта денег">Портфели</ScreenTitle>
+        <ScreenTitle subtitle="Личный профиль и объединённые портфели с партнёрами">Портфели</ScreenTitle>
         <Pressable
           onPress={() => setIsCreating((v) => !v)}
           style={({ pressed }) => [
@@ -102,31 +109,65 @@ export default function PortfoliosScreen() {
         renderItem={({ item }) => {
           const active = item.id === selectedId;
           const isPersonal = item.type === 'PERSONAL';
+          const members = item.members ?? [];
+          const memberNames = members.map((member: any) => member.user?.name ?? 'Пользователь').filter(Boolean);
+          const memberCount = members.length || 1;
+          const isSelecting = selectingId === item.id;
+
           return (
-            <Card style={{ borderColor: active ? colors.primary : colors.border }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing(1.5) }}>
-                <IconBubble name={isPersonal ? 'wallet' : 'users'} color={isPersonal ? colors.primary : '#7C3AED'} bg={isPersonal ? colors.primarySoft : colors.violetSoft} />
-                <View style={{ flex: 1 }}>
-                  <Text style={{ color: colors.text, fontFamily: appFont, fontSize: 18, fontWeight: '600' }}>{item.name}</Text>
-                  <Text style={{ color: colors.textMuted, fontFamily: appFont, fontSize: 12, marginTop: 2 }}>
-                    {TYPE_LABELS[item.type] ?? item.type} · {item.members?.length ?? 1} участн. · {item.currency}
-                  </Text>
-                </View>
-                {active ? (
-                  <View style={{ paddingHorizontal: spacing(1), paddingVertical: 6, borderRadius: radius.pill, backgroundColor: colors.primarySoft }}>
-                    <Text style={{ color: colors.primary, fontFamily: appFont, fontSize: 12, fontWeight: '600' }}>выбран</Text>
+            <Pressable onPress={() => choosePortfolio(item.id)} disabled={active && !isSelecting}>
+              <Card style={{ borderColor: active ? colors.primary : colors.border }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing(1.5) }}>
+                  <IconBubble name={isPersonal ? 'wallet' : 'users'} color={isPersonal ? colors.primary : '#7C3AED'} bg={isPersonal ? colors.primarySoft : colors.violetSoft} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: colors.text, fontFamily: appFont, fontSize: 18, fontWeight: '600' }}>{item.name}</Text>
+                    <Text style={{ color: colors.textMuted, fontFamily: appFont, fontSize: 12, marginTop: 2 }}>
+                      {TYPE_LABELS[item.type] ?? item.type} · {memberCount} участн. · {item.currency}
+                    </Text>
                   </View>
-                ) : null}
-              </View>
-              <View style={{ flexDirection: 'row', gap: spacing(1), marginTop: spacing(1.5) }}>
-                <View style={{ flex: 1 }}>
-                  <Button title="Выбрать" variant={active ? 'ghost' : 'primary'} onPress={() => select(item.id)} />
+                  {active ? (
+                    <View style={{ paddingHorizontal: spacing(1), paddingVertical: 6, borderRadius: radius.pill, backgroundColor: colors.primarySoft }}>
+                      <Text style={{ color: colors.primary, fontFamily: appFont, fontSize: 12, fontWeight: '600' }}>выбран</Text>
+                    </View>
+                  ) : null}
                 </View>
-                <View style={{ flex: 1 }}>
-                  <Button title="Пригласить" variant="ghost" onPress={() => invite(item.id)} />
+
+                <View style={{ marginTop: spacing(1.5), padding: spacing(1.25), borderRadius: radius.md, backgroundColor: colors.cardAlt }}>
+                  <Text style={{ color: colors.text, fontFamily: appFont, fontSize: 13, fontWeight: '600', marginBottom: spacing(0.75) }}>
+                    Участники портфеля
+                  </Text>
+                  {memberNames.length ? (
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: spacing(0.75) }}>
+                      {memberNames.map((memberName, index) => (
+                        <View key={`${memberName}-${index}`} style={{ paddingHorizontal: spacing(1), paddingVertical: 6, borderRadius: radius.pill, backgroundColor: active ? colors.primarySoft : colors.card }}>
+                          <Text style={{ color: active ? colors.primary : colors.text, fontFamily: appFont, fontSize: 12, fontWeight: '600' }}>
+                            {memberName}
+                          </Text>
+                        </View>
+                      ))}
+                    </View>
+                  ) : (
+                    <Text style={{ color: colors.textMuted, fontFamily: appFont, fontSize: 12 }}>
+                      Сейчас в портфеле только владелец. После приглашения партнёры появятся здесь.
+                    </Text>
+                  )}
                 </View>
-              </View>
-            </Card>
+
+                <View style={{ flexDirection: 'row', gap: spacing(1), marginTop: spacing(1.5) }}>
+                  <View style={{ flex: 1 }}>
+                    <Button
+                      title={active ? (isSelecting ? 'Выбрано' : 'Текущий портфель') : 'Выбрать'}
+                      variant={active ? 'ghost' : 'primary'}
+                      onPress={() => choosePortfolio(item.id)}
+                      disabled={active && !isSelecting}
+                    />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Button title="Пригласить" variant="ghost" onPress={() => invite(item.id)} />
+                  </View>
+                </View>
+              </Card>
+            </Pressable>
           );
         }}
         ListEmptyComponent={<Text style={{ color: colors.textMuted, fontFamily: appFont }}>Портфелей пока нет.</Text>}
