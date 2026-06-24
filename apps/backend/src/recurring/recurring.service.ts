@@ -18,6 +18,13 @@ export class RecurringService {
     return d;
   }
 
+  private static anchorDate(comment?: string | null): Date | null {
+    const raw = comment?.split('[anchor:')[1]?.split(']')[0];
+    if (!raw) return null;
+    const date = new Date(raw);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+
   async create(userId: string, dto: CreateRecurringDto) {
     await this.access.require(dto.portfolioId, userId, 'add');
     return this.prisma.recurringPayment.create({
@@ -29,7 +36,7 @@ export class RecurringService {
         amount: dto.amount,
         paymentDay: dto.paymentDay,
         recurrence: dto.recurrence ?? Recurrence.MONTHLY,
-        nextPaymentDate: RecurringService.nextDate(dto.paymentDay),
+        nextPaymentDate: RecurringService.anchorDate(dto.comment) ?? RecurringService.nextDate(dto.paymentDay),
         paymentMethod: dto.paymentMethod,
         reminderDays: dto.reminderDays ?? [7, 3, 1, 0],
         comment: dto.comment,
@@ -54,7 +61,7 @@ export class RecurringService {
       where: { id },
       data: {
         ...dto,
-        nextPaymentDate: dto.paymentDay ? RecurringService.nextDate(dto.paymentDay) : undefined,
+        nextPaymentDate: RecurringService.anchorDate(dto.comment) ?? (dto.paymentDay ? RecurringService.nextDate(dto.paymentDay) : undefined),
       },
     });
   }
