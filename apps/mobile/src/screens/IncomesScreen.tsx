@@ -52,11 +52,51 @@ function periodLabel(item: any) {
   return null;
 }
 
+function anchorDateFromDescription(description?: string | null) {
+  const match = description?.match(/\[anchor:(\d{4}-\d{2}-\d{2})\]/);
+  return match?.[1] ?? null;
+}
+
+function customPeriod(description?: string | null) {
+  const match = description?.match(/\[period:(\d+):(DAY|WEEK|MONTH)\]/);
+  if (!match) return null;
+  return { interval: Number(match[1]), unit: match[2] as 'DAY' | 'WEEK' | 'MONTH' };
+}
+
+function addDays(date: Date, days: number) {
+  const copy = new Date(date);
+  copy.setDate(copy.getDate() + days);
+  return copy;
+}
+
+function addMonths(date: Date, months: number) {
+  const copy = new Date(date);
+  copy.setMonth(copy.getMonth() + months);
+  return copy;
+}
+
+function nextOccurrenceLabel(item: any, rangeStart: Date, rangeEnd: Date) {
+  if (item.recurrence === 'ONE_TIME') return null;
+  const anchor = anchorDateFromDescription(item.description) ?? item.date;
+  let cursor = new Date(anchor);
+  const period = customPeriod(item.description);
+  for (let guard = 0; guard < 500 && cursor <= rangeEnd; guard += 1) {
+    if (cursor >= rangeStart && cursor <= rangeEnd) return cursor.toLocaleDateString('ru-RU');
+    if (period?.unit === 'DAY') cursor = addDays(cursor, period.interval);
+    else if (period?.unit === 'WEEK') cursor = addDays(cursor, period.interval * 7);
+    else if (period?.unit === 'MONTH') cursor = addMonths(cursor, period.interval);
+    else if (item.recurrence === 'WEEKLY') cursor = addDays(cursor, 7);
+    else if (item.recurrence === 'TWICE_A_MONTH') cursor = addDays(cursor, 14);
+    else if (item.recurrence === 'MONTHLY') cursor = addMonths(cursor, 1);
+    else break;
+  }
+  return null;
+}
+
 export default function IncomesScreen({ navigation }: any) {
   const { selectedId } = usePortfolios();
   const [items, setItems] = useState<any[]>([]);
   const [periodMode, setPeriodMode] = useState<'MONTH' | 'YEAR'>('MONTH');
-  const [portfolioMode, setPortfolioMode] = useState<'SHARED' | 'PERSONAL'>('SHARED');
   const [removingId, setRemovingId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -117,17 +157,11 @@ export default function IncomesScreen({ navigation }: any) {
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg, padding: spacing(2.5) }}>
       <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: spacing(1.5) }}>
-        <ScreenTitle subtitle="Расписание выплат">Доходы</ScreenTitle>
+        <ScreenTitle subtitle="Личные доходы и плановые поступления">Доходы</ScreenTitle>
         <Pressable
           onPress={() => navigation.navigate('AddIncome')}
           style={({ pressed }) => [
-            {
-              height: 42,
-              paddingHorizontal: spacing(1.5),
-              borderRadius: radius.pill,
-              backgroundColor: colors.accent,
-              justifyContent: 'center',
-            },
+            { height: 42, paddingHorizontal: spacing(1.5), borderRadius: radius.pill, backgroundColor: colors.accent, justifyContent: 'center' },
             pressed && { opacity: 0.86 },
           ]}
         >
@@ -136,14 +170,6 @@ export default function IncomesScreen({ navigation }: any) {
       </View>
 
       <View style={{ gap: spacing(1), marginBottom: spacing(1.5) }}>
-        <SegmentedControl
-          value={portfolioMode}
-          onChange={setPortfolioMode}
-          options={[
-            { label: 'Общий', value: 'SHARED' },
-            { label: 'Личный', value: 'PERSONAL' },
-          ]}
-        />
         <SegmentedControl
           value={periodMode}
           onChange={setPeriodMode}
@@ -156,7 +182,7 @@ export default function IncomesScreen({ navigation }: any) {
       <PortfolioPicker />
 
       <Card style={{ marginBottom: spacing(1.5) }}>
-        <Text style={{ color: colors.textMuted, fontFamily: appFont, fontSize: 13 }}>Плановые доходы · {periodMode === 'MONTH' ? 'месяц' : 'год'}</Text>
+        <Text style={{ color: colors.textMuted, fontFamily: appFont, fontSize: 13 }}>Мои плановые доходы · {periodMode === 'MONTH' ? 'месяц' : 'год'}</Text>
         <Text style={{ color: colors.income, fontFamily: appFont, fontSize: 30, fontWeight: '600', marginTop: 6 }}>
           +{new Intl.NumberFormat('ru-RU').format(Math.round(total))} ₽
         </Text>
@@ -171,6 +197,7 @@ export default function IncomesScreen({ navigation }: any) {
           const period = periodLabel(item);
           const occurrenceCount = countOccurrences({ startDate: item.date, recurrence: item.recurrence, marker: item.description, rangeStart: start, rangeEnd: end });
           const periodAmount = Number(item.amount) * occurrenceCount;
+          const nearestOccurrence = periodMode === 'YEAR' ? nextOccurrenceLabel(item, start, end) : new Date(item.date).toLocaleDateString('ru-RU');
           return (
             <Card style={{ marginBottom: spacing(1.25) }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing(1.5) }}>
@@ -180,9 +207,9 @@ export default function IncomesScreen({ navigation }: any) {
                     {INCOME_TYPE[item.type] ?? item.type}
                   </Text>
                   <Text style={{ color: colors.textMuted, fontFamily: appFont, fontSize: 12, marginTop: 4 }}>
-                    Ближайшая: {new Date(item.date).toLocaleDateString('ru-RU')}
+                    Ближайшая: {nearestOccurrence ?? new Date(item.date).toLocaleDateString('ru-RU')}
                     {period ? ` · ${period}` : ''}
-                    {periodMode === 'YEAR' && occurrenceCount > 1 ? ` · ${occurrenceCount} выплат` : ''}
+                    {periodMode === 'YEAR' && occurrenceCount > 1 ? ` · ${occurrenceCount} выплат · ${new Intl.NumberFormat('ru-RU').format(Math.round(Number(item.amount)))} ₽` : ''}
                   </Text>
                 </View>
                 <Text style={{ color: colors.income, fontFamily: appFont, fontWeight: '600', fontSize: 16 }}>
