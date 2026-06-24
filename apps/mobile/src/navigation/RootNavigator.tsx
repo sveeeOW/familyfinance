@@ -9,6 +9,7 @@ import { Icon } from '../components/icons';
 
 import LoginScreen from '../screens/LoginScreen';
 import RegisterScreen from '../screens/RegisterScreen';
+import PasswordRecoveryScreen from '../screens/PasswordRecoveryScreen';
 import DashboardScreen from '../screens/DashboardScreen';
 import ExpensesScreen from '../screens/ExpensesScreen';
 import AddExpenseScreen from '../screens/AddExpenseScreen';
@@ -47,6 +48,7 @@ const linking = {
       Invite: 'invite/:token',
       Login: 'login',
       Register: 'register',
+      PasswordRecovery: 'password-recovery',
       Tabs: {
         screens: {
           Главная: '',
@@ -163,6 +165,7 @@ export default function RootNavigator() {
               })}
             />
             <Stack.Screen name="Invite" component={InviteScreen} options={{ title: 'Приглашение' }} />
+            <Stack.Screen name="PasswordRecovery" component={PasswordRecoveryScreen} options={{ title: 'Восстановление доступа' }} />
             <Stack.Screen name="AddExpense" component={AddExpenseScreen} options={{ title: 'Новый расход' }} />
             <Stack.Screen name="AddIncome" component={AddIncomeScreen} options={{ title: 'Доход' }} />
             <Stack.Screen name="ScanReceipt" component={ScanReceiptScreen} options={{ title: 'Импорт операций' }} />
@@ -178,6 +181,7 @@ export default function RootNavigator() {
             <Stack.Screen name="Invite" component={InviteScreen} options={{ title: 'Приглашение' }} />
             <Stack.Screen name="Login" component={LoginScreen} options={{ headerShown: false }} />
             <Stack.Screen name="Register" component={RegisterScreen} options={{ title: 'Регистрация' }} />
+            <Stack.Screen name="PasswordRecovery" component={PasswordRecoveryScreen} options={{ title: 'Восстановление доступа' }} />
           </>
         )}
       </Stack.Navigator>
