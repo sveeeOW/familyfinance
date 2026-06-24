@@ -3,7 +3,7 @@ import { Alert, Linking, Pressable, ScrollView, Text, View } from 'react-native'
 import { api } from '../api/endpoints';
 import { useAuth } from '../store/auth';
 import { Button, Card, ScreenTitle } from '../components/ui';
-import { colors, radius, spacing } from '../theme';
+import { colors, spacing } from '../theme';
 
 export default function SettingsScreen({ navigation }: any) {
   const { user, logout } = useAuth();
@@ -18,16 +18,25 @@ export default function SettingsScreen({ navigation }: any) {
     }
   };
 
+  const profileLogin = user?.email ?? user?.phone ?? '';
+
   return (
     <ScrollView style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ padding: spacing(2.5) }}>
       <ScreenTitle>Настройки</ScreenTitle>
 
       <Card>
         <Text style={{ color: colors.text, fontSize: 18, fontWeight: '700' }}>{user?.name}</Text>
-        <Text style={{ color: colors.textMuted, marginTop: 2 }}>{user?.email ?? user?.phone}</Text>
+        <Text style={{ color: colors.textMuted, marginTop: 2 }}>{profileLogin}</Text>
         <Text style={{ color: colors.textMuted, marginTop: 2, fontSize: 12 }}>
           Валюта по умолчанию: {user?.defaultCurrency}
         </Text>
+        <View style={{ marginTop: spacing(1.5) }}>
+          <Button
+            title="Изменить пароль"
+            variant="ghost"
+            onPress={() => navigation.navigate('PasswordRecovery', { login: profileLogin })}
+          />
+        </View>
       </Card>
 
       <Card style={{ marginTop: spacing(1.5) }}>
