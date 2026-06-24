@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Alert, Pressable, ScrollView, Text, View } from 'react-native';
+import { Pressable, ScrollView, Text, View } from 'react-native';
 import { api } from '../api/endpoints';
 import { request } from '../api/client';
 import { Category } from '../api/types';
@@ -41,21 +41,21 @@ function customLabel(interval: number, unit: string) {
   return interval === 1 ? 'каждый месяц' : `каждые ${interval} ${plural(interval, ['месяц', 'месяца', 'месяцев'])}`;
 }
 
-function periodNote(periodKey: string, customInterval: string, customUnit: string) {
+function periodNote(periodKey: string, customInterval: string, customUnit: string, anchorDate: string) {
   if (periodKey === 'ONE_TIME') return undefined;
-  if (periodKey === 'WEEKLY') return 'Период: каждую неделю';
-  if (periodKey === 'MONTHLY') return 'Период: каждый месяц';
+  if (periodKey === 'WEEKLY') return `Период: каждую неделю [anchor:${anchorDate}]`;
+  if (periodKey === 'MONTHLY') return `Период: каждый месяц [anchor:${anchorDate}]`;
 
   const preset = PERIODS.find((period) => period.key === periodKey) as any;
   if (periodKey !== 'CUSTOM' && preset?.interval && preset?.unit) {
-    return `Период: ${customLabel(preset.interval, preset.unit)} [period:${preset.interval}:${preset.unit}]`;
+    return `Период: ${customLabel(preset.interval, preset.unit)} [period:${preset.interval}:${preset.unit}] [anchor:${anchorDate}]`;
   }
 
   const interval = Number(customInterval);
   if (!Number.isInteger(interval) || interval <= 0) {
     return { error: 'Укажите период целым числом: например 2 недели или 15 дней' };
   }
-  return `Период: ${customLabel(interval, customUnit)} [period:${interval}:${customUnit}]`;
+  return `Период: ${customLabel(interval, customUnit)} [period:${interval}:${customUnit}] [anchor:${anchorDate}]`;
 }
 
 function periodFromComment(comment?: string | null) {
@@ -83,7 +83,7 @@ export default function AddExpenseScreen({ navigation, route }: any) {
   const [date, setDate] = useState(expense?.date ? new Date(expense.date).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10));
   const [categories, setCategories] = useState<Category[]>([]);
   const [categoryId, setCategoryId] = useState<string | null>(expense?.categoryId ?? expense?.category?.id ?? null);
-  const [scope, setScope] = useState<'PERSONAL' | 'SHARED'>(expense?.scope ?? 'SHARED');
+  const [scope, setScope] = useState<'PERSONAL' | 'SHARED'>(expense?.scope ?? 'PERSONAL');
   const [period, setPeriod] = useState(savedPeriod.key);
   const [customInterval, setCustomInterval] = useState(savedPeriod.interval);
   const [customUnit, setCustomUnit] = useState(savedPeriod.unit);
@@ -102,7 +102,7 @@ export default function AddExpenseScreen({ navigation, route }: any) {
       setError('Введите сумму');
       return;
     }
-    const note = periodNote(period, customInterval, customUnit);
+    const note = periodNote(period, customInterval, customUnit, date);
     if (typeof note === 'object' && note?.error) {
       setError(note.error);
       return;
@@ -147,28 +147,6 @@ export default function AddExpenseScreen({ navigation, route }: any) {
     }
   }, [amount, title, date, categoryId, scope, selectedId, navigation, period, customInterval, customUnit, isEditing, expense?.id]);
 
-  const removeExpense = () => {
-    if (!expense?.id) return;
-    Alert.alert('Удалить расход?', 'Запись будет удалена из статистики.', [
-      { text: 'Отмена', style: 'cancel' },
-      {
-        text: 'Удалить',
-        style: 'destructive',
-        onPress: async () => {
-          setBusy(true);
-          try {
-            await request(`/expenses/${expense.id}`, { method: 'DELETE' });
-            navigation.goBack();
-          } catch (e: any) {
-            setError(e.message ?? 'Не удалось удалить');
-          } finally {
-            setBusy(false);
-          }
-        },
-      },
-    ]);
-  };
-
   return (
     <ScrollView style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ padding: spacing(2.5) }}>
       <ScreenTitle>{isEditing ? 'Редактировать расход' : 'Новый расход'}</ScreenTitle>
@@ -176,7 +154,7 @@ export default function AddExpenseScreen({ navigation, route }: any) {
       <Field label="Описание / продавец" value={title} onChangeText={setTitle} placeholder="Перекрёсток" />
       <Field label="Дата списания" value={date} onChangeText={setDate} placeholder="2026-06-23" />
 
-      <Text style={{ color: colors.textMuted, marginBottom: 6, fontWeight: '700' }}>Тип расхода</Text>
+      <Text style={{ color: colors.textMuted, marginBottom: 6, fontWeight: '700' }}>Куда добавить расход</Text>
       <View style={{ flexDirection: 'row', gap: spacing(1), marginBottom: spacing(2) }}>
         {(['SHARED', 'PERSONAL'] as const).map((s) => (
           <Pressable
@@ -192,10 +170,13 @@ export default function AddExpenseScreen({ navigation, route }: any) {
               alignItems: 'center',
             }}
           >
-            <Text style={{ color: scope === s ? colors.primary : colors.text, fontWeight: '800' }}>{s === 'SHARED' ? 'Общий' : 'Личный'}</Text>
+            <Text style={{ color: scope === s ? colors.primary : colors.text, fontWeight: '800' }}>{s === 'SHARED' ? 'В общий портфель' : 'В мои'}</Text>
           </Pressable>
         ))}
       </View>
+      <Text style={{ color: colors.textMuted, marginTop: -spacing(1), marginBottom: spacing(2), fontSize: 12 }}>
+        По умолчанию расходы добавляются в “Мои”. Общий портфель нужен для расходов, которые должны участвовать в совместном расчёте.
+      </Text>
 
       <CategorySelector
         categories={categories}
@@ -216,7 +197,6 @@ export default function AddExpenseScreen({ navigation, route }: any) {
       {error ? <Text style={{ color: colors.expense, marginBottom: spacing(1), marginTop: spacing(1) }}>{error}</Text> : null}
       <View style={{ marginTop: spacing(2), gap: spacing(1) }}>
         <Button title={isEditing ? 'Сохранить изменения' : 'Сохранить расход'} onPress={submit} loading={busy} />
-        {isEditing ? <Button title="Удалить расход" onPress={removeExpense} variant="danger" disabled={busy} /> : null}
       </View>
     </ScrollView>
   );
