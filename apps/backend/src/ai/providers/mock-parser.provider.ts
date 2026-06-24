@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import {
   ParseImageInput,
+  ParsePdfInput,
   ParseTextInput,
   ParsedReceipt,
   ReceiptParser,
@@ -14,19 +15,35 @@ import {
 @Injectable()
 export class MockReceiptParser implements ReceiptParser {
   async parseImage(_input: ParseImageInput): Promise<ParsedReceipt> {
-    return {
-      type: 'expense',
-      amount: null,
-      currency: 'RUB',
-      date: new Date().toISOString().slice(0, 10),
-      merchant: null,
-      description: 'Скриншот получен (mock-режим: распознавание изображений выключено)',
-      category: null,
-      confidence: 40,
-      needsClarification: true,
-      clarificationQuestion: 'Опишите трату текстом — какая это была покупка?',
-      extractedText: null,
-    };
+    return this.fallbackImage();
+  }
+
+  async parseOperationsImage(_input: ParseImageInput): Promise<ParsedReceipt[]> {
+    return [this.fallbackImage()];
+  }
+
+  async parseOperationsPdf(input: ParsePdfInput): Promise<ParsedReceipt[]> {
+    return [
+      {
+        type: 'unknown',
+        amount: null,
+        currency: 'RUB',
+        date: new Date().toISOString().slice(0, 10),
+        merchant: null,
+        description: `PDF получен: ${input.filename}. Mock-режим не распознаёт PDF.`,
+        category: null,
+        confidence: 20,
+        needsClarification: true,
+        clarificationQuestion: 'Mock-режим: добавьте операцию вручную или включите AI_PROVIDER=claude.',
+        extractedText: null,
+      },
+    ];
+  }
+
+  async parseOperationsText(input: ParseTextInput): Promise<ParsedReceipt[]> {
+    const lines = input.text.split(/\n|;/).map((line) => line.trim()).filter(Boolean);
+    const operations = lines.map((line) => this.parseText({ ...input, text: line }));
+    return Promise.all(operations.length ? operations : [this.parseText(input)]);
   }
 
   async parseText(input: ParseTextInput): Promise<ParsedReceipt> {
@@ -36,9 +53,10 @@ export class MockReceiptParser implements ReceiptParser {
 
     const guess = this.guessCategory(text, input.availableCategories);
     const merchant = this.guessMerchant(input.text);
+    const type = text.includes('поступ') || text.includes('зарплат') || text.includes('доход') ? 'income' : 'expense';
 
     return {
-      type: 'expense',
+      type,
       amount,
       currency: 'RUB',
       date: new Date().toISOString().slice(0, 10),
@@ -50,9 +68,25 @@ export class MockReceiptParser implements ReceiptParser {
       clarificationQuestion: !amount
         ? 'Не вижу сумму. Сколько потрачено?'
         : guess.confidence < 70
-          ? 'Не уверен в категории. Что это за трата?'
+          ? 'Не уверен в категории. Что это за операция?'
           : null,
       extractedText: input.text,
+    };
+  }
+
+  private fallbackImage(): ParsedReceipt {
+    return {
+      type: 'unknown',
+      amount: null,
+      currency: 'RUB',
+      date: new Date().toISOString().slice(0, 10),
+      merchant: null,
+      description: 'Скриншот получен (mock-режим: распознавание изображений выключено)',
+      category: null,
+      confidence: 40,
+      needsClarification: true,
+      clarificationQuestion: 'Опишите операцию текстом — что это было?',
+      extractedText: null,
     };
   }
 
@@ -65,6 +99,7 @@ export class MockReceiptParser implements ReceiptParser {
       { kw: ['аптек', 'лекарств'], cat: 'Аптеки' },
       { kw: ['ozon', 'wildberries', 'озон', 'wb', 'маркет'], cat: 'Маркетплейсы' },
       { kw: ['корм', 'ветеринар', 'зоомагаз'], cat: 'Домашние животные' },
+      { kw: ['кредит', 'погашение'], cat: 'Кредиты' },
     ];
     for (const r of rules) {
       if (r.kw.some((k) => text.includes(k)) && available.includes(r.cat)) {
@@ -75,7 +110,7 @@ export class MockReceiptParser implements ReceiptParser {
   }
 
   private guessMerchant(text: string): string | null {
-    const known = ['Перекрёсток', 'Пятёрочка', 'Магнит', 'Лента', 'Ozon', 'Wildberries', 'Газпромнефть', 'Лукойл'];
+    const known = ['Перекрёсток', 'Пятёрочка', 'Магнит', 'Лента', 'Ozon', 'Wildberries', 'Газпромнефть', 'Лукойл', 'Сбербанк'];
     return known.find((m) => text.toLowerCase().includes(m.toLowerCase())) ?? null;
   }
 }
