@@ -1,8 +1,10 @@
 // Контракт распознавания чеков/уведомлений (§11, §21).
 // За интерфейсом может стоять любой провайдер: vision-LLM, Tesseract+LLM и т.п.
 
+export type ParsedOperationType = 'expense' | 'income' | 'transfer' | 'unknown';
+
 export interface ParsedReceipt {
-  type: 'expense' | 'income';
+  type: ParsedOperationType;
   amount: number | null;
   currency: string;
   date: string | null; // ISO yyyy-mm-dd
@@ -41,4 +43,12 @@ export interface ReceiptParser {
   parseImage(input: ParseImageInput): Promise<ParsedReceipt>;
   parseText(input: ParseTextInput): Promise<ParsedReceipt>;
   parsePdfStatement?(input: ParsePdfInput): Promise<ParsedReceipt[]>;
+
+  /**
+   * Новый сценарий: один файл/текст может содержать несколько операций.
+   * Используется для банковских скринов, PDF-квитанций и выписок.
+   */
+  parseOperationsImage?(input: ParseImageInput): Promise<ParsedReceipt[]>;
+  parseOperationsText?(input: ParseTextInput): Promise<ParsedReceipt[]>;
+  parseOperationsPdf?(input: ParsePdfInput): Promise<ParsedReceipt[]>;
 }
