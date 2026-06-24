@@ -23,6 +23,7 @@ import InvestmentsScreen from '../screens/InvestmentsScreen';
 import ScanReceiptScreen from '../screens/ScanReceiptScreen';
 import CategoriesScreen from '../screens/CategoriesScreen';
 import ParticipantsScreen from '../screens/ParticipantsScreen';
+import InviteScreen from '../screens/InviteScreen';
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
@@ -36,6 +37,26 @@ const navTheme = {
     text: colors.text,
     border: colors.border,
     primary: colors.primary,
+  },
+};
+
+const linking = {
+  prefixes: ['https://familyfinance-appfront.vercel.app', 'familyfinance://'],
+  config: {
+    screens: {
+      Invite: 'invite/:token',
+      Login: 'login',
+      Register: 'register',
+      Tabs: {
+        screens: {
+          Главная: '',
+          Расходы: 'expenses',
+          Доходы: 'incomes',
+          Портфели: 'portfolios',
+          Аналитика: 'analytics',
+        },
+      },
+    },
   },
 };
 
@@ -102,7 +123,7 @@ export default function RootNavigator() {
   const status = useAuth((s) => s.status);
 
   return (
-    <NavigationContainer theme={navTheme}>
+    <NavigationContainer theme={navTheme} linking={linking as any}>
       <Stack.Navigator
         screenOptions={{
           headerStyle: { backgroundColor: colors.bg },
@@ -141,9 +162,10 @@ export default function RootNavigator() {
                 ),
               })}
             />
+            <Stack.Screen name="Invite" component={InviteScreen} options={{ title: 'Приглашение' }} />
             <Stack.Screen name="AddExpense" component={AddExpenseScreen} options={{ title: 'Новый расход' }} />
             <Stack.Screen name="AddIncome" component={AddIncomeScreen} options={{ title: 'Доход' }} />
-            <Stack.Screen name="ScanReceipt" component={ScanReceiptScreen} options={{ title: 'Сканировать чек' }} />
+            <Stack.Screen name="ScanReceipt" component={ScanReceiptScreen} options={{ title: 'Импорт операций' }} />
             <Stack.Screen name="Clarification" component={ClarificationScreen} options={{ title: 'Требует уточнения' }} />
             <Stack.Screen name="Credits" component={CreditsScreen} options={{ title: 'Кредиты' }} />
             <Stack.Screen name="Investments" component={InvestmentsScreen} options={{ title: 'Инвестиции' }} />
@@ -153,6 +175,7 @@ export default function RootNavigator() {
           </>
         ) : (
           <>
+            <Stack.Screen name="Invite" component={InviteScreen} options={{ title: 'Приглашение' }} />
             <Stack.Screen name="Login" component={LoginScreen} options={{ headerShown: false }} />
             <Stack.Screen name="Register" component={RegisterScreen} options={{ title: 'Регистрация' }} />
           </>
