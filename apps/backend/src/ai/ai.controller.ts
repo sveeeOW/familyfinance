@@ -2,7 +2,9 @@ import { BadRequestException, Body, Controller, Post, UseGuards } from '@nestjs/
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { AiService } from './ai.service';
 import {
+  ConfirmImportOperationsDto,
   ConfirmRecognitionDto,
+  ImportOperationsDto,
   RecognizeImageDto,
   RecognizeTextDto,
   UpdateCategoryRuleDto,
@@ -33,6 +35,23 @@ export class AiController {
       return this.ai.recognizeText({ text: dto.text, userId, portfolioId: dto.portfolioId });
     }
     throw new BadRequestException('Передайте text или imageBase64');
+  }
+
+  @Post('import-operations')
+  async importOperations(@CurrentUser('userId') userId: string, @Body() dto: ImportOperationsDto) {
+    return this.ai.importOperations({
+      userId,
+      portfolioId: dto.portfolioId,
+      fileBase64: dto.fileBase64,
+      mimeType: dto.mimeType,
+      filename: dto.filename,
+      text: dto.text,
+    });
+  }
+
+  @Post('confirm-import-operations')
+  confirmImportOperations(@CurrentUser('userId') userId: string, @Body() dto: ConfirmImportOperationsDto) {
+    return this.ai.confirmImportedOperations({ userId, operations: dto.operations ?? [] });
   }
 
   @Post('confirm-expense')
