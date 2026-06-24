@@ -18,7 +18,7 @@ const STATUS_LABEL: Record<Expense['status'], { text: string; color: string }> =
   RECOGNITION_ERROR: { text: 'ошибка', color: colors.expense },
 };
 
-type ExpenseViewMode = 'ALL' | 'MINE' | 'PARTNERS' | 'SHARED';
+type ExpenseViewMode = 'MINE' | 'PARTNERS' | 'SHARED';
 
 function periodLabel(item: any) {
   if (typeof item.comment !== 'string') return null;
@@ -26,12 +26,62 @@ function periodLabel(item: any) {
   return item.comment.replace('Период: ', '').split(' [')[0];
 }
 
+function recurrenceForExpense(item: any) {
+  if (typeof item.comment !== 'string') return 'ONE_TIME';
+  if (item.comment.includes('[period:')) return 'CUSTOM';
+  if (item.comment.includes('каждую неделю')) return 'WEEKLY';
+  if (item.comment.includes('каждый месяц')) return 'MONTHLY';
+  return 'ONE_TIME';
+}
+
+function anchorDateFromComment(comment?: string | null) {
+  const match = comment?.match(/\[anchor:(\d{4}-\d{2}-\d{2})\]/);
+  return match?.[1] ?? null;
+}
+
+function customPeriod(comment?: string | null) {
+  const match = comment?.match(/\[period:(\d+):(DAY|WEEK|MONTH)\]/);
+  if (!match) return null;
+  return { interval: Number(match[1]), unit: match[2] as 'DAY' | 'WEEK' | 'MONTH' };
+}
+
+function addDays(date: Date, days: number) {
+  const copy = new Date(date);
+  copy.setDate(copy.getDate() + days);
+  return copy;
+}
+
+function addMonths(date: Date, months: number) {
+  const copy = new Date(date);
+  copy.setMonth(copy.getMonth() + months);
+  return copy;
+}
+
+function nextOccurrenceLabel(item: any, rangeStart: Date, rangeEnd: Date) {
+  const recurrence = recurrenceForExpense(item);
+  if (recurrence === 'ONE_TIME') return null;
+  const anchor = anchorDateFromComment(item.comment) ?? item.date;
+  let cursor = new Date(anchor);
+  const period = customPeriod(item.comment);
+  for (let guard = 0; guard < 500 && cursor <= rangeEnd; guard += 1) {
+    if (cursor >= rangeStart && cursor <= rangeEnd) return cursor.toLocaleDateString('ru-RU');
+    if (period?.unit === 'DAY') cursor = addDays(cursor, period.interval);
+    else if (period?.unit === 'WEEK') cursor = addDays(cursor, period.interval * 7);
+    else if (period?.unit === 'MONTH') cursor = addMonths(cursor, period.interval);
+    else if (recurrence === 'WEEKLY') cursor = addDays(cursor, 7);
+    else if (recurrence === 'MONTHLY') cursor = addMonths(cursor, 1);
+    else break;
+  }
+  return null;
+}
+
 export default function ExpensesScreen({ navigation }: any) {
   const { selectedId } = usePortfolios();
   const currentUserId = useAuth((state) => state.user?.id);
   const [items, setItems] = useState<Expense[]>([]);
   const [periodMode, setPeriodMode] = useState<'MONTH' | 'YEAR'>('MONTH');
-  const [viewMode, setViewMode] = useState<ExpenseViewMode>('ALL');
+  const [viewMode, setViewMode] = useState<ExpenseViewMode>('MINE');
+  const [selectedPartnerId, setSelectedPartnerId] = useState<string | null>(null);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -49,11 +99,21 @@ export default function ExpensesScreen({ navigation }: any) {
 
   const { start, end } = useMemo(() => getPeriodRange(periodMode), [periodMode]);
 
+  const partners = useMemo(() => {
+    const map = new Map<string, string>();
+    items.forEach((item) => {
+      if (item.paidBy?.id && item.paidBy.id !== currentUserId) {
+        map.set(item.paidBy.id, item.paidBy.name ?? 'Партнёр');
+      }
+    });
+    return Array.from(map.entries()).map(([id, name]) => ({ id, name }));
+  }, [items, currentUserId]);
+
   const filteredItems = useMemo(() => {
     return items.filter((item) => {
       const occurrences = countOccurrences({
         startDate: item.date,
-        recurrence: item.comment?.includes('[period:') ? 'CUSTOM' : 'ONE_TIME',
+        recurrence: recurrenceForExpense(item),
         marker: item.comment,
         rangeStart: start,
         rangeEnd: end,
@@ -64,17 +124,19 @@ export default function ExpensesScreen({ navigation }: any) {
       const paidByPartner = Boolean(currentUserId && item.paidBy?.id && item.paidBy.id !== currentUserId);
 
       if (viewMode === 'MINE') return paidByCurrentUser || !item.paidBy;
-      if (viewMode === 'PARTNERS') return paidByPartner;
-      if (viewMode === 'SHARED') return (item.scope ?? 'SHARED') === 'SHARED';
-      return true;
+      if (viewMode === 'PARTNERS') {
+        if (!paidByPartner) return false;
+        return selectedPartnerId ? item.paidBy?.id === selectedPartnerId : true;
+      }
+      return (item.scope ?? 'PERSONAL') === 'SHARED';
     });
-  }, [items, start, end, viewMode, currentUserId]);
+  }, [items, start, end, viewMode, currentUserId, selectedPartnerId]);
 
   const total = useMemo(
     () => filteredItems.reduce((sum, item) => sum + scheduledAmount({
       amount: item.amount,
       startDate: item.date,
-      recurrence: item.comment?.includes('[period:') ? 'CUSTOM' : 'ONE_TIME',
+      recurrence: recurrenceForExpense(item),
       marker: item.comment,
       rangeStart: start,
       rangeEnd: end,
@@ -97,26 +159,19 @@ export default function ExpensesScreen({ navigation }: any) {
   }, []);
 
   const viewLabel = {
-    ALL: 'все операции портфеля',
     MINE: 'мои операции',
-    PARTNERS: 'операции партнёров',
-    SHARED: 'общие операции',
+    PARTNERS: selectedPartnerId ? `партнёр: ${partners.find((p) => p.id === selectedPartnerId)?.name ?? 'выбранный'}` : 'операции партнёров',
+    SHARED: 'общий портфель',
   }[viewMode];
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg, padding: spacing(2.5) }}>
       <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: spacing(1.5) }}>
-        <ScreenTitle subtitle="Единый портфель: личные, общие и партнёрские операции">Расходы</ScreenTitle>
+        <ScreenTitle subtitle="Единый портфель: мои, партнёрские и общие операции">Расходы</ScreenTitle>
         <Pressable
           onPress={() => navigation.navigate('AddExpense')}
           style={({ pressed }) => [
-            {
-              height: 42,
-              paddingHorizontal: spacing(1.5),
-              borderRadius: radius.pill,
-              backgroundColor: colors.accent,
-              justifyContent: 'center',
-            },
+            { height: 42, paddingHorizontal: spacing(1.5), borderRadius: radius.pill, backgroundColor: colors.accent, justifyContent: 'center' },
             pressed && { opacity: 0.86 },
           ]}
         >
@@ -129,7 +184,6 @@ export default function ExpensesScreen({ navigation }: any) {
           value={viewMode}
           onChange={setViewMode}
           options={[
-            { label: 'Все', value: 'ALL' },
             { label: 'Мои', value: 'MINE' },
             { label: 'Партнёры', value: 'PARTNERS' },
             { label: 'Общие', value: 'SHARED' },
@@ -144,6 +198,27 @@ export default function ExpensesScreen({ navigation }: any) {
           ]}
         />
       </View>
+
+      {viewMode === 'PARTNERS' && partners.length > 0 ? (
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: spacing(1), marginBottom: spacing(1.5) }}>
+          <Pressable
+            onPress={() => setSelectedPartnerId(null)}
+            style={{ paddingHorizontal: spacing(1.25), paddingVertical: spacing(0.75), borderRadius: radius.pill, backgroundColor: selectedPartnerId === null ? colors.primarySoft : colors.card, borderWidth: 1, borderColor: selectedPartnerId === null ? colors.primary : colors.border }}
+          >
+            <Text style={{ color: selectedPartnerId === null ? colors.primary : colors.text, fontFamily: appFont, fontWeight: '600' }}>Все партнёры</Text>
+          </Pressable>
+          {partners.map((partner) => (
+            <Pressable
+              key={partner.id}
+              onPress={() => setSelectedPartnerId(partner.id)}
+              style={{ paddingHorizontal: spacing(1.25), paddingVertical: spacing(0.75), borderRadius: radius.pill, backgroundColor: selectedPartnerId === partner.id ? colors.primarySoft : colors.card, borderWidth: 1, borderColor: selectedPartnerId === partner.id ? colors.primary : colors.border }}
+            >
+              <Text style={{ color: selectedPartnerId === partner.id ? colors.primary : colors.text, fontFamily: appFont, fontWeight: '600' }}>{partner.name}</Text>
+            </Pressable>
+          ))}
+        </View>
+      ) : null}
+
       <PortfolioPicker />
 
       <Card style={{ marginBottom: spacing(1.5) }}>
@@ -152,7 +227,7 @@ export default function ExpensesScreen({ navigation }: any) {
           −{new Intl.NumberFormat('ru-RU').format(Math.round(total))} ₽
         </Text>
         <Text style={{ color: colors.textMuted, fontFamily: appFont, fontSize: 12, marginTop: spacing(0.75) }}>
-          Портфель объединяет данные участников. Фильтры только меняют срез отображения.
+          Мои расходы добавляются в личный профиль. Портфель суммирует выбранных участников и общие операции.
         </Text>
       </Card>
 
@@ -171,18 +246,13 @@ export default function ExpensesScreen({ navigation }: any) {
         renderItem={({ item }) => {
           const status = STATUS_LABEL[item.status];
           const period = periodLabel(item);
-          const occurrenceCount = countOccurrences({
-            startDate: item.date,
-            recurrence: item.comment?.includes('[period:') ? 'CUSTOM' : 'ONE_TIME',
-            marker: item.comment,
-            rangeStart: start,
-            rangeEnd: end,
-          });
+          const occurrenceCount = countOccurrences({ startDate: item.date, recurrence: recurrenceForExpense(item), marker: item.comment, rangeStart: start, rangeEnd: end });
           const periodAmount = Number(item.amount) * occurrenceCount;
+          const nearestOccurrence = periodMode === 'YEAR' ? nextOccurrenceLabel(item, start, end) : null;
           const isDeleting = deletingId === item.id;
           const isPendingDelete = pendingDeleteId === item.id;
           const ownerLabel = item.paidBy?.name ? ` · ${item.paidBy.name}` : '';
-          const scopeLabel = item.scope === 'PERSONAL' ? 'личный' : 'общий';
+          const scopeLabel = item.scope === 'SHARED' ? 'общий' : 'мой';
 
           return (
             <Card style={{ marginBottom: spacing(1.25), opacity: isDeleting ? 0.55 : 1 }}>
@@ -196,7 +266,7 @@ export default function ExpensesScreen({ navigation }: any) {
                     {item.category?.name ?? 'Без категории'} · {new Date(item.date).toLocaleDateString('ru-RU')} · {scopeLabel}{ownerLabel}
                     {status.text ? ` · ${status.text}` : ''}
                     {period ? ` · ${period}` : ''}
-                    {periodMode === 'YEAR' && occurrenceCount > 1 ? ` · ${occurrenceCount} раз` : ''}
+                    {periodMode === 'YEAR' && occurrenceCount > 1 ? ` · ближайшая ${nearestOccurrence ?? '—'} · ${occurrenceCount} платежа · ${new Intl.NumberFormat('ru-RU').format(Math.round(Number(item.amount)))} ₽` : ''}
                   </Text>
                 </View>
                 <Text style={{ color: colors.expense, fontFamily: appFont, fontWeight: '600', fontSize: 16 }}>
@@ -208,38 +278,20 @@ export default function ExpensesScreen({ navigation }: any) {
                 <View style={{ marginTop: spacing(1.5), gap: spacing(1) }}>
                   <Text style={{ color: colors.text, fontFamily: appFont, fontWeight: '600' }}>Удалить этот расход?</Text>
                   <View style={{ flexDirection: 'row', gap: spacing(1) }}>
-                    <Pressable
-                      onPress={() => setPendingDeleteId(null)}
-                      disabled={isDeleting}
-                      style={{ flex: 1, paddingVertical: spacing(1), borderRadius: radius.pill, alignItems: 'center', backgroundColor: colors.primarySoft }}
-                    >
+                    <Pressable onPress={() => setPendingDeleteId(null)} disabled={isDeleting} style={{ flex: 1, paddingVertical: spacing(1), borderRadius: radius.pill, alignItems: 'center', backgroundColor: colors.primarySoft }}>
                       <Text style={{ color: colors.primary, fontFamily: appFont, fontWeight: '500' }}>Отмена</Text>
                     </Pressable>
-                    <Pressable
-                      onPress={() => confirmDelete(item)}
-                      disabled={isDeleting}
-                      style={{ flex: 1, paddingVertical: spacing(1), borderRadius: radius.pill, alignItems: 'center', backgroundColor: colors.redSoft }}
-                    >
-                      <Text style={{ color: colors.expense, fontFamily: appFont, fontWeight: '500' }}>
-                        {isDeleting ? 'Удаляю…' : 'Да, удалить'}
-                      </Text>
+                    <Pressable onPress={() => confirmDelete(item)} disabled={isDeleting} style={{ flex: 1, paddingVertical: spacing(1), borderRadius: radius.pill, alignItems: 'center', backgroundColor: colors.redSoft }}>
+                      <Text style={{ color: colors.expense, fontFamily: appFont, fontWeight: '500' }}>{isDeleting ? 'Удаляю…' : 'Да, удалить'}</Text>
                     </Pressable>
                   </View>
                 </View>
               ) : (
                 <View style={{ flexDirection: 'row', gap: spacing(1), marginTop: spacing(1.5) }}>
-                  <Pressable
-                    onPress={() => navigation.navigate('AddExpense', { expense: item })}
-                    disabled={isDeleting}
-                    style={{ flex: 1, paddingVertical: spacing(1), borderRadius: radius.pill, alignItems: 'center', backgroundColor: colors.primarySoft }}
-                  >
+                  <Pressable onPress={() => navigation.navigate('AddExpense', { expense: item })} disabled={isDeleting} style={{ flex: 1, paddingVertical: spacing(1), borderRadius: radius.pill, alignItems: 'center', backgroundColor: colors.primarySoft }}>
                     <Text style={{ color: colors.primary, fontFamily: appFont, fontWeight: '500' }}>Изменить</Text>
                   </Pressable>
-                  <Pressable
-                    onPress={() => { setDeleteError(null); setPendingDeleteId(item.id); }}
-                    disabled={isDeleting}
-                    style={{ flex: 1, paddingVertical: spacing(1), borderRadius: radius.pill, alignItems: 'center', backgroundColor: colors.redSoft }}
-                  >
+                  <Pressable onPress={() => { setDeleteError(null); setPendingDeleteId(item.id); }} disabled={isDeleting} style={{ flex: 1, paddingVertical: spacing(1), borderRadius: radius.pill, alignItems: 'center', backgroundColor: colors.redSoft }}>
                     <Text style={{ color: colors.expense, fontFamily: appFont, fontWeight: '500' }}>Удалить</Text>
                   </Pressable>
                 </View>
