@@ -1,10 +1,10 @@
-import { Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { AiStatus, ExpenseSource, ExpenseStatus } from '@prisma/client';
+import { BadRequestException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { AiStatus, ExpenseSource, ExpenseStatus, IncomeType, Recurrence } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CategorizationService } from '../categorization/categorization.service';
 import { ExpensesService } from '../expenses/expenses.service';
 import { StorageService } from '../storage/storage.service';
-import { RECEIPT_PARSER, ReceiptParser, ParsedReceipt } from './receipt-parser.interface';
+import { RECEIPT_PARSER, ReceiptParser, ParsedReceipt, ParsedOperationType } from './receipt-parser.interface';
 
 export interface RecognitionDraft {
   logId: string;
@@ -15,6 +15,11 @@ export interface RecognitionDraft {
   status: ExpenseStatus;
   screenshotUrl: string | null;
   duplicateOf: string | null;
+}
+
+export interface ImportOperationDraft extends RecognitionDraft {
+  operationType: ParsedOperationType;
+  suggestedAction: 'expense' | 'income' | 'skip';
 }
 
 @Injectable()
@@ -71,6 +76,58 @@ export class AiService {
       source: params.source ?? ExpenseSource.TELEGRAM_BOT,
       fileUrl: screenshotUrl,
     });
+  }
+
+  async importOperations(params: {
+    userId: string;
+    portfolioId: string;
+    fileBase64?: string;
+    mimeType?: string;
+    filename?: string;
+    text?: string;
+  }): Promise<ImportOperationDraft[]> {
+    const categories = await this.categoryNames(params.portfolioId);
+    const history = await this.merchantHistory(params.userId, params.portfolioId);
+    let operations: ParsedReceipt[] = [];
+
+    if (params.text?.trim()) {
+      operations = this.parser.parseOperationsText
+        ? await this.parser.parseOperationsText({ text: params.text, availableCategories: categories, previousMerchantCategories: history })
+        : [await this.parser.parseText({ text: params.text, availableCategories: categories, previousMerchantCategories: history })];
+    } else if (params.fileBase64) {
+      const mimeType = params.mimeType ?? 'image/jpeg';
+      if (mimeType.includes('pdf')) {
+        if (!this.parser.parseOperationsPdf && !this.parser.parsePdfStatement) {
+          throw new BadRequestException('Текущий AI-провайдер не поддерживает PDF-импорт.');
+        }
+        operations = this.parser.parseOperationsPdf
+          ? await this.parser.parseOperationsPdf({ fileBase64: params.fileBase64, filename: params.filename ?? 'document.pdf', availableCategories: categories, previousMerchantCategories: history })
+          : await this.parser.parsePdfStatement!({ fileBase64: params.fileBase64, filename: params.filename ?? 'document.pdf', availableCategories: categories, previousMerchantCategories: history });
+      } else {
+        operations = this.parser.parseOperationsImage
+          ? await this.parser.parseOperationsImage({ imageBase64: params.fileBase64, mimeType, availableCategories: categories, previousMerchantCategories: history })
+          : [await this.parser.parseImage({ imageBase64: params.fileBase64, mimeType, availableCategories: categories, previousMerchantCategories: history })];
+      }
+    } else {
+      throw new BadRequestException('Передайте файл или текст для импорта операций');
+    }
+
+    const result: ImportOperationDraft[] = [];
+    for (const operation of operations.filter((item) => item.amount || item.description || item.merchant).slice(0, 30)) {
+      const draft = await this.postProcess(operation, {
+        userId: params.userId,
+        portfolioId: params.portfolioId,
+        source: ExpenseSource.IMPORT,
+        fileUrl: null,
+      });
+      const operationType = this.normalizeOperationType(operation.type);
+      result.push({
+        ...draft,
+        operationType,
+        suggestedAction: operationType === 'income' ? 'income' : operationType === 'expense' ? 'expense' : 'skip',
+      });
+    }
+    return result;
   }
 
   async recognizePdfStatement(params: {
@@ -134,7 +191,7 @@ export class AiService {
     const status = this.statusFromConfidence(parsed);
 
     let duplicateOf: string | null = null;
-    if (parsed.amount) {
+    if (parsed.amount && parsed.type === 'expense') {
       const dup = await this.expenses.findPotentialDuplicate({
         portfolioId: ctx.portfolioId,
         paidByUserId: ctx.userId,
@@ -154,7 +211,7 @@ export class AiService {
         extractedText: parsed.extractedText,
         parsedAmount: parsed.amount ?? undefined,
         parsedDate: parsed.date ? new Date(parsed.date) : undefined,
-        parsedMerchant: parsed.merchant,
+        parsedMerchant: parsed.merchant ?? parsed.description,
         parsedCategoryId: resolvedCategoryId,
         confidence: parsed.confidence,
         status: this.aiStatus(status),
@@ -225,6 +282,58 @@ export class AiService {
     return { expenseId: expense.id, expense };
   }
 
+  async confirmImportedOperations(params: {
+    userId: string;
+    operations: { logId: string; action: 'expense' | 'income' | 'skip'; categoryId?: string; comment?: string }[];
+  }) {
+    const results: { logId: string; action: string; id?: string; skipped?: boolean }[] = [];
+
+    for (const operation of params.operations) {
+      if (operation.action === 'skip') {
+        results.push({ logId: operation.logId, action: 'skip', skipped: true });
+        continue;
+      }
+
+      if (operation.action === 'expense') {
+        const confirmed = await this.confirmRecognition({
+          logId: operation.logId,
+          userId: params.userId,
+          categoryId: operation.categoryId,
+          force: true,
+        });
+        results.push({ logId: operation.logId, action: 'expense', id: confirmed.expenseId });
+        continue;
+      }
+
+      const log = await this.prisma.aiRecognitionLog.findUnique({ where: { id: operation.logId } });
+      if (!log) throw new NotFoundException('Запись распознавания не найдена');
+      if (!log.parsedAmount || Number(log.parsedAmount) <= 0) {
+        throw new BadRequestException('Не удалось определить сумму дохода');
+      }
+      const portfolioId = log.portfolioId!;
+      await this.prisma.portfolioMember.findFirstOrThrow({ where: { portfolioId, userId: params.userId, status: 'ACTIVE' } });
+      const income = await this.prisma.income.create({
+        data: {
+          portfolioId,
+          userId: params.userId,
+          type: IncomeType.OTHER,
+          amount: Number(log.parsedAmount),
+          currency: 'RUB',
+          date: log.parsedDate ?? new Date(),
+          recurrence: Recurrence.ONE_TIME,
+          description: operation.comment ?? log.parsedMerchant ?? log.extractedText ?? 'Импортированный доход',
+        },
+      });
+      await this.prisma.aiRecognitionLog.update({
+        where: { id: log.id },
+        data: { status: AiStatus.CONFIRMED },
+      });
+      results.push({ logId: operation.logId, action: 'income', id: income.id });
+    }
+
+    return { success: true, results };
+  }
+
   async updateCategoryRule(params: {
     userId: string;
     portfolioId?: string;
@@ -242,7 +351,7 @@ export class AiService {
 
   private statusFromConfidence(parsed: ParsedReceipt): ExpenseStatus {
     if (parsed.amount == null) return ExpenseStatus.NEEDS_CLARIFICATION;
-    if (parsed.needsClarification || parsed.confidence < 45) return ExpenseStatus.NEEDS_CLARIFICATION;
+    if (parsed.needsClarification || parsed.confidence < 45 || parsed.type === 'unknown') return ExpenseStatus.NEEDS_CLARIFICATION;
     return ExpenseStatus.PENDING;
   }
 
@@ -259,47 +368,48 @@ export class AiService {
     }
   }
 
-  private async categoryNames(portfolioId: string): Promise<string[]> {
-    const cats = await this.prisma.category.findMany({
-      where: { isActive: true, OR: [{ portfolioId: null, isSystem: true }, { portfolioId }] },
-      select: { name: true },
-    });
-    return [...new Set(cats.map((c) => c.name))];
+  private normalizeOperationType(type: ParsedReceipt['type']): ParsedOperationType {
+    return type === 'income' || type === 'transfer' || type === 'unknown' ? type : 'expense';
   }
 
-  private async categoryIdByName(name: string | null, portfolioId: string): Promise<string | null> {
-    if (!name) return null;
-    const cat = await this.prisma.category.findFirst({
-      where: {
-        isActive: true,
-        name: { equals: name, mode: 'insensitive' },
-        OR: [{ portfolioId: null, isSystem: true }, { portfolioId }],
-      },
+  private async categoryNames(portfolioId: string) {
+    const categories = await this.prisma.category.findMany({
+      where: { OR: [{ portfolioId }, { portfolioId: null }], isActive: true },
+      select: { name: true },
+      orderBy: [{ isSystem: 'asc' }, { name: 'asc' }],
     });
-    return cat?.id ?? null;
+    return categories.map((c) => c.name);
+  }
+
+  private async categoryIdByName(name: string | null, portfolioId: string) {
+    if (!name) return null;
+    const category = await this.prisma.category.findFirst({
+      where: {
+        name: { equals: name, mode: 'insensitive' },
+        OR: [{ portfolioId }, { portfolioId: null }],
+        isActive: true,
+      },
+      select: { id: true },
+    });
+    return category?.id ?? null;
   }
 
   private async merchantHistory(userId: string, portfolioId: string) {
-    const recent = await this.prisma.expense.findMany({
-      where: { portfolioId, merchant: { not: null }, categoryId: { not: null } },
-      select: { merchant: true, category: { select: { name: true } } },
+    const expenses = await this.prisma.expense.findMany({
+      where: { portfolioId, userId, merchant: { not: null }, categoryId: { not: null } },
+      include: { category: { select: { name: true } } },
       orderBy: { createdAt: 'desc' },
-      take: 20,
+      take: 25,
     });
-    const seen = new Set<string>();
-    const result: { merchant: string; category: string }[] = [];
-    for (const r of recent) {
-      if (r.merchant && r.category && !seen.has(r.merchant)) {
-        seen.add(r.merchant);
-        result.push({ merchant: r.merchant, category: r.category.name });
-      }
-    }
-    return result;
+    return expenses
+      .filter((expense) => expense.merchant && expense.category?.name)
+      .map((expense) => ({ merchant: expense.merchant!, category: expense.category!.name }));
   }
 
-  private extFromMime(mime: string): string {
+  private extFromMime(mime: string) {
     if (mime.includes('png')) return 'png';
     if (mime.includes('webp')) return 'webp';
+    if (mime.includes('pdf')) return 'pdf';
     return 'jpg';
   }
 }
