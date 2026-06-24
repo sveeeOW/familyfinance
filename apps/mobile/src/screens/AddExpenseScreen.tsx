@@ -5,6 +5,7 @@ import { request } from '../api/client';
 import { Category } from '../api/types';
 import { usePortfolios } from '../store/portfolio';
 import { Button, Field, ScreenTitle } from '../components/ui';
+import { CategorySelector } from '../components/CategorySelector';
 import { colors, radius, spacing } from '../theme';
 
 const PERIODS = [
@@ -196,25 +197,12 @@ export default function AddExpenseScreen({ navigation, route }: any) {
         ))}
       </View>
 
-      <Text style={{ color: colors.textMuted, marginBottom: 6, fontWeight: '700' }}>Категория</Text>
-      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: spacing(1), marginBottom: spacing(2) }}>
-        {categories.map((c) => (
-          <Pressable
-            key={c.id}
-            onPress={() => setCategoryId(c.id)}
-            style={{
-              paddingHorizontal: spacing(1.5),
-              paddingVertical: spacing(0.75),
-              borderRadius: radius.lg,
-              borderWidth: 1,
-              borderColor: categoryId === c.id ? (c.color ?? colors.primary) : colors.border,
-              backgroundColor: categoryId === c.id ? colors.primarySoft : colors.card,
-            }}
-          >
-            <Text style={{ color: colors.text, fontSize: 13, fontWeight: '700' }}>{c.name}</Text>
-          </Pressable>
-        ))}
-      </View>
+      <CategorySelector
+        categories={categories}
+        value={categoryId}
+        onChange={setCategoryId}
+        onAddPress={() => navigation.navigate('Categories')}
+      />
 
       <Text style={{ color: colors.textMuted, marginBottom: 6, fontWeight: '700' }}>Период расхода</Text>
       <Chips options={PERIODS} value={period} onChange={setPeriod} />
