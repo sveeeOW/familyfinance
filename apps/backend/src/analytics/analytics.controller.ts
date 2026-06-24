@@ -1,6 +1,7 @@
 import { Controller, Get, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { AnalyticsService } from './analytics.service';
+import { ForecastService } from './forecast.service';
 import { InvestmentsService } from '../investments/investments.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -12,6 +13,7 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 export class AnalyticsController {
   constructor(
     private readonly analytics: AnalyticsService,
+    private readonly forecastService: ForecastService,
     private readonly investments: InvestmentsService,
   ) {}
 
@@ -36,7 +38,7 @@ export class AnalyticsController {
 
   @Get('forecast')
   forecast(@Query('portfolioId') portfolioId: string, @CurrentUser('userId') userId: string) {
-    return this.analytics.forecast(portfolioId, userId);
+    return this.forecastService.forecast(portfolioId, userId);
   }
 
   @Get('credits')
