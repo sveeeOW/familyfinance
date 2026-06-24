@@ -26,7 +26,6 @@ export class PortfoliosService {
     private readonly notifications: NotificationsService,
   ) {}
 
-  // ─── CRUD портфелей (§6.1) ────────────────────────────────────────────────
   async create(userId: string, dto: CreatePortfolioDto) {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     const portfolio = await this.prisma.portfolio.create({
@@ -46,7 +45,7 @@ export class PortfoliosService {
   }
 
   async list(userId: string) {
-    const portfolios = await this.prisma.portfolio.findMany({
+    return this.prisma.portfolio.findMany({
       where: { members: { some: { userId, status: MemberStatus.ACTIVE } } },
       include: {
         members: { include: { user: { select: { id: true, name: true, avatarUrl: true } } } },
@@ -54,18 +53,16 @@ export class PortfoliosService {
       },
       orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
     });
-    return portfolios;
   }
 
   async get(id: string, userId: string) {
     await this.access.requireMember(id, userId);
-    const portfolio = await this.prisma.portfolio.findUnique({
+    return this.prisma.portfolio.findUnique({
       where: { id },
       include: {
         members: { include: { user: { select: { id: true, name: true, avatarUrl: true } } } },
       },
     });
-    return portfolio;
   }
 
   async update(id: string, userId: string, dto: UpdatePortfolioDto) {
@@ -75,17 +72,12 @@ export class PortfoliosService {
 
   async remove(id: string, userId: string) {
     const { member, portfolio } = await this.access.requireMember(id, userId);
-    if (member.role !== MemberRole.OWNER) {
-      throw new ForbiddenException('Удалить портфель может только владелец');
-    }
-    if (portfolio.isDefault) {
-      throw new BadRequestException('Нельзя удалить личный портфель по умолчанию');
-    }
+    if (member.role !== MemberRole.OWNER) throw new ForbiddenException('Удалить портфель может только владелец');
+    if (portfolio.isDefault) throw new BadRequestException('Нельзя удалить личный портфель по умолчанию');
     await this.prisma.portfolio.delete({ where: { id } });
     return { success: true };
   }
 
-  // ─── Участники (§19.3) ────────────────────────────────────────────────────
   async listMembers(portfolioId: string, userId: string) {
     await this.access.requireMember(portfolioId, userId);
     return this.prisma.portfolioMember.findMany({
@@ -98,29 +90,20 @@ export class PortfoliosService {
   async updateMember(portfolioId: string, memberId: string, userId: string, dto: UpdateMemberDto) {
     await this.access.require(portfolioId, userId, 'manage');
     const member = await this.prisma.portfolioMember.findUnique({ where: { id: memberId } });
-    if (!member || member.portfolioId !== portfolioId) {
-      throw new NotFoundException('Участник не найден');
-    }
-    if (member.role === MemberRole.OWNER) {
-      throw new BadRequestException('Роль владельца изменить нельзя');
-    }
+    if (!member || member.portfolioId !== portfolioId) throw new NotFoundException('Участник не найден');
+    if (member.role === MemberRole.OWNER) throw new BadRequestException('Роль владельца изменить нельзя');
     return this.prisma.portfolioMember.update({ where: { id: memberId }, data: dto });
   }
 
   async removeMember(portfolioId: string, memberId: string, userId: string) {
     await this.access.require(portfolioId, userId, 'manage');
     const member = await this.prisma.portfolioMember.findUnique({ where: { id: memberId } });
-    if (!member || member.portfolioId !== portfolioId) {
-      throw new NotFoundException('Участник не найден');
-    }
-    if (member.role === MemberRole.OWNER) {
-      throw new BadRequestException('Владельца нельзя удалить из портфеля');
-    }
+    if (!member || member.portfolioId !== portfolioId) throw new NotFoundException('Участник не найден');
+    if (member.role === MemberRole.OWNER) throw new BadRequestException('Владельца нельзя удалить из портфеля');
     await this.prisma.portfolioMember.delete({ where: { id: memberId } });
     return { success: true };
   }
 
-  // ─── Invite-ссылки (§6.2) ─────────────────────────────────────────────────
   async createInvite(portfolioId: string, userId: string, dto: CreateInviteDto) {
     await this.access.require(portfolioId, userId, 'manage');
     const token = nanoid(24);
@@ -135,22 +118,18 @@ export class PortfoliosService {
         expiresAt: new Date(Date.now() + (dto.expiresInHours ?? 168) * 3600 * 1000),
       },
     });
-    const base = process.env.PUBLIC_URL ?? 'http://localhost:3000';
+    const base = (process.env.PUBLIC_APP_URL ?? process.env.FRONTEND_URL ?? process.env.PUBLIC_URL ?? 'http://localhost:3000').replace(/\/$/, '');
     return { ...invite, url: `${base}/invite/${token}` };
   }
 
   async acceptInvite(token: string, userId: string) {
     const invite = await this.prisma.inviteLink.findUnique({ where: { token } });
-    if (!invite || invite.status !== 'ACTIVE') {
-      throw new NotFoundException('Приглашение не найдено или отозвано');
-    }
+    if (!invite || invite.status !== 'ACTIVE') throw new NotFoundException('Приглашение не найдено или отозвано');
     if (invite.expiresAt && invite.expiresAt < new Date()) {
       await this.prisma.inviteLink.update({ where: { id: invite.id }, data: { status: 'EXPIRED' } });
       throw new BadRequestException('Срок действия приглашения истёк');
     }
-    if (invite.usedCount >= invite.maxUses) {
-      throw new BadRequestException('Приглашение уже использовано');
-    }
+    if (invite.usedCount >= invite.maxUses) throw new BadRequestException('Приглашение уже использовано');
 
     const existing = await this.prisma.portfolioMember.findUnique({
       where: { portfolioId_userId: { portfolioId: invite.portfolioId, userId } },
@@ -162,25 +141,15 @@ export class PortfoliosService {
     await this.prisma.$transaction([
       this.prisma.portfolioMember.upsert({
         where: { portfolioId_userId: { portfolioId: invite.portfolioId, userId } },
-        create: {
-          portfolioId: invite.portfolioId,
-          userId,
-          role: invite.role,
-          accessLevel: invite.accessLevel,
-          status: MemberStatus.ACTIVE,
-        },
+        create: { portfolioId: invite.portfolioId, userId, role: invite.role, accessLevel: invite.accessLevel, status: MemberStatus.ACTIVE },
         update: { status: MemberStatus.ACTIVE, role: invite.role, accessLevel: invite.accessLevel },
       }),
       this.prisma.inviteLink.update({
         where: { id: invite.id },
-        data: {
-          usedCount: { increment: 1 },
-          status: invite.usedCount + 1 >= invite.maxUses ? 'EXPIRED' : 'ACTIVE',
-        },
+        data: { usedCount: { increment: 1 }, status: invite.usedCount + 1 >= invite.maxUses ? 'EXPIRED' : 'ACTIVE' },
       }),
     ]);
 
-    // Уведомляем владельца портфеля о новом участнике (§15). Не критично к ошибкам.
     try {
       const [portfolio, joined] = await Promise.all([
         this.prisma.portfolio.findUnique({ where: { id: invite.portfolioId } }),
