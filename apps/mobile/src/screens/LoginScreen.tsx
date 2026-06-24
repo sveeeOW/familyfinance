@@ -52,6 +52,8 @@ export default function LoginScreen({ navigation }: any) {
         />
         {error ? <Text style={{ color: colors.expense, marginBottom: spacing(1) }}>{error}</Text> : null}
         <Button title="Войти" onPress={submit} loading={busy} />
+        <View style={{ height: spacing(1) }} />
+        <Button title="Забыли пароль?" variant="ghost" onPress={() => navigation.navigate('PasswordRecovery', { login: value.trim() })} />
         <View style={{ height: spacing(1.5) }} />
         <Button title="Создать аккаунт" variant="ghost" onPress={() => navigation.navigate('Register')} />
       </ScrollView>
