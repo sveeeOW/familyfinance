@@ -18,8 +18,9 @@ export default function PortfoliosScreen() {
 
   const invite = async (portfolioId: string) => {
     try {
-      const { url } = await api.createInvite(portfolioId);
-      await Share.share({ message: `Приглашаю в портфель Family Finance: ${url}` });
+      const { url, token } = await api.createInvite(portfolioId);
+      const shareUrl = normalizeInviteUrl(url, token);
+      await Share.share({ message: `Приглашаю в портфель Family Finance: ${shareUrl}` });
     } catch (e: any) {
       Alert.alert('Ошибка', e.message ?? 'Не удалось создать приглашение');
     }
@@ -132,4 +133,13 @@ export default function PortfoliosScreen() {
       />
     </View>
   );
+}
+
+function normalizeInviteUrl(url: string, token: string) {
+  const webOrigin = (globalThis as any)?.location?.origin;
+  const base = webOrigin && !String(webOrigin).includes('familyfinance-application')
+    ? String(webOrigin)
+    : 'https://familyfinance-appfront.vercel.app';
+  const extractedToken = token || url.split('/invite/')[1] || url.split('/').pop();
+  return `${base.replace(/\/$/, '')}/invite/${extractedToken}`;
 }
