@@ -27,21 +27,22 @@ export default function DashboardScreen({ navigation }: any) {
       setForecast(f);
       setClarifyCount(c.length);
     } catch {
-      // молча — экран покажет пустое состояние
+      // экран покажет пустое состояние
     }
   }, [selectedId]);
 
-  useFocusEffect(
-    useCallback(() => {
-      loadPortfolios().then(loadData);
-    }, [loadData, loadPortfolios]),
-  );
+  useFocusEffect(useCallback(() => { loadPortfolios().then(loadData); }, [loadData, loadPortfolios]));
 
   const onRefresh = async () => {
     setRefreshing(true);
     await loadData();
     setRefreshing(false);
   };
+
+  const actualBalance = forecast?.actualToDate?.balance ?? summary?.balance ?? 0;
+  const futureIncome = forecast?.restOfMonth?.income ?? forecast?.expectedIncome ?? 0;
+  const futureExpense = forecast?.restOfMonth?.expense ?? forecast?.obligatory ?? 0;
+  const forecastBalance = forecast?.endOfMonthBalance ?? 0;
 
   return (
     <ScrollView
@@ -53,11 +54,32 @@ export default function DashboardScreen({ navigation }: any) {
       <PortfolioPicker />
 
       <Card style={{ marginTop: spacing(1.5) }}>
-        <Row label="Доход за месяц" value={<Money value={summary?.totalIncome ?? 0} tone="income" />} />
+        <Text style={labelStyle}>Актуальное положение на сегодня</Text>
+        <Money value={actualBalance} />
+        <Text style={{ color: colors.textMuted, marginTop: 4, fontSize: 12 }}>
+          Учитываются выплаты и списания, которые уже должны были произойти к текущей дате.
+        </Text>
+      </Card>
+
+      <Card style={{ marginTop: spacing(1.5) }}>
+        <Text style={labelStyle}>Прогноз на конец месяца</Text>
+        <Money value={forecastBalance} />
+        <View style={{ marginTop: spacing(1.25), gap: spacing(0.75) }}>
+          <Row label="Ожидаемые доходы" value={<Money value={futureIncome} tone="income" size={16} />} />
+          <Divider />
+          <Row label="Ожидаемые расходы" value={<Money value={futureExpense} tone="expense" size={16} />} />
+        </View>
+        <Text style={{ color: colors.textMuted, marginTop: spacing(1), fontSize: 12 }}>
+          В прогноз должны попадать будущие доходы, регулярные расходы и разовые операции с датой до конца месяца.
+        </Text>
+      </Card>
+
+      <Card style={{ marginTop: spacing(1.5) }}>
+        <Row label="Доходы месяца" value={<Money value={summary?.totalIncome ?? 0} tone="income" />} />
         <Divider />
-        <Row label="Расход за месяц" value={<Money value={summary?.totalExpense ?? 0} tone="expense" />} />
+        <Row label="Расходы месяца" value={<Money value={summary?.totalExpense ?? 0} tone="expense" />} />
         <Divider />
-        <Row label="Остаток" value={<Money value={summary?.balance ?? 0} />} />
+        <Row label="Баланс месяца" value={<Money value={summary?.balance ?? 0} />} />
       </Card>
 
       <View style={{ flexDirection: 'row', gap: spacing(1.5), marginTop: spacing(1.5) }}>
@@ -76,14 +98,13 @@ export default function DashboardScreen({ navigation }: any) {
           <Button title="＋ Расход" onPress={() => navigation.navigate('AddExpense')} />
         </View>
         <View style={{ flex: 1 }}>
-          <Button title="📷 Сканировать чек" variant="ghost" onPress={() => navigation.navigate('ScanReceipt')} />
+          <Button title="📷 Импорт" variant="ghost" onPress={() => navigation.navigate('ScanReceipt')} />
         </View>
       </View>
 
       {forecast ? (
         <Card style={{ marginTop: spacing(1.5) }}>
-          <Text style={labelStyle}>Прогноз остатка на конец месяца</Text>
-          <Money value={forecast.endOfMonthBalance ?? 0} />
+          <Text style={labelStyle}>Длинный прогноз</Text>
           <Text style={{ color: colors.textMuted, marginTop: 4, fontSize: 12 }}>
             3 мес: {fmt(forecast.forecast?.in3Months)} · 6 мес: {fmt(forecast.forecast?.in6Months)}
           </Text>
@@ -94,14 +115,10 @@ export default function DashboardScreen({ navigation }: any) {
         <Pressable onPress={() => navigation.navigate('Clarification')}>
           <Card style={{ marginTop: spacing(1.5), borderColor: colors.warning }}>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-              <Text style={{ color: colors.warning, fontWeight: '700' }}>
-                Требует уточнения: {clarifyCount}
-              </Text>
+              <Text style={{ color: colors.warning, fontWeight: '700' }}>Требует уточнения: {clarifyCount}</Text>
               <Text style={{ color: colors.warning, fontSize: 18 }}>›</Text>
             </View>
-            <Text style={{ color: colors.textMuted, marginTop: 4 }}>
-              Расходы, которые бот или AI не смогли точно определить.
-            </Text>
+            <Text style={{ color: colors.textMuted, marginTop: 4 }}>Расходы, которые бот или AI не смогли точно определить.</Text>
           </Card>
         </Pressable>
       ) : null}
@@ -109,10 +126,7 @@ export default function DashboardScreen({ navigation }: any) {
       <Text style={[labelStyle, { marginTop: spacing(2.5), marginBottom: spacing(1) }]}>Расходы по категориям</Text>
       {summary?.byCategory?.length ? (
         summary.byCategory.slice(0, 8).map((c) => (
-          <View
-            key={c.id}
-            style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: spacing(1) }}
-          >
+          <View key={c.id} style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: spacing(1) }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing(1) }}>
               <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: c.color ?? colors.primary }} />
               <Text style={{ color: colors.text }}>{c.name}</Text>
@@ -129,8 +143,8 @@ export default function DashboardScreen({ navigation }: any) {
 
 function Row({ label, value }: { label: string; value: React.ReactNode }) {
   return (
-    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-      <Text style={{ color: colors.textMuted }}>{label}</Text>
+    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: spacing(1) }}>
+      <Text style={{ color: colors.textMuted, flex: 1 }}>{label}</Text>
       {value}
     </View>
   );
