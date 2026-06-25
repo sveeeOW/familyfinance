@@ -51,6 +51,7 @@ export default function CreditCardsScreen() {
   const [chargeDate, setChargeDate] = useState(today());
   const [paymentAmount, setPaymentAmount] = useState('');
   const [paymentDate, setPaymentDate] = useState(today());
+  const [editingChargeId, setEditingChargeId] = useState<string | null>(null);
 
   useEffect(() => {
     AsyncStorage.getItem(STORAGE_KEY).then((raw) => {
@@ -84,16 +85,64 @@ export default function CreditCardsScreen() {
     setGraceDays('120');
   };
 
-  const addCharge = async () => {
-    if (!selected) return;
-    const amount = Number(chargeAmount.replace(',', '.'));
-    if (!amount || amount <= 0) return;
-    const charge: ChargeItem = { id: uid(), title: chargeTitle.trim() || 'Покупка по карте', amount, remainingAmount: amount, spentAt: chargeDate || today(), graceDays: selected.graceDays };
-    const next = cards.map((card) => card.id === selected.id ? { ...card, charges: [charge, ...card.charges] } : card);
-    await persist(next);
+  const resetChargeForm = () => {
+    setEditingChargeId(null);
     setChargeTitle('');
     setChargeAmount('');
     setChargeDate(today());
+  };
+
+  const addOrUpdateCharge = async () => {
+    if (!selected) return;
+    const amount = Number(chargeAmount.replace(',', '.'));
+    if (!amount || amount <= 0) return;
+
+    const next = cards.map((card) => {
+      if (card.id !== selected.id) return card;
+      if (!editingChargeId) {
+        const charge: ChargeItem = {
+          id: uid(),
+          title: chargeTitle.trim() || 'Покупка по карте',
+          amount,
+          remainingAmount: amount,
+          spentAt: chargeDate || today(),
+          graceDays: card.graceDays,
+        };
+        return { ...card, charges: [charge, ...card.charges] };
+      }
+      return {
+        ...card,
+        charges: card.charges.map((charge) => {
+          if (charge.id !== editingChargeId) return charge;
+          const paid = Math.max(0, charge.amount - charge.remainingAmount);
+          const remaining = Math.max(0, amount - paid);
+          return {
+            ...charge,
+            title: chargeTitle.trim() || 'Покупка по карте',
+            amount,
+            remainingAmount: remaining,
+            spentAt: chargeDate || charge.spentAt,
+            closedAt: remaining === 0 ? (charge.closedAt ?? today()) : null,
+          };
+        }),
+      };
+    });
+    await persist(next);
+    resetChargeForm();
+  };
+
+  const editCharge = (charge: ChargeItem) => {
+    setEditingChargeId(charge.id);
+    setChargeTitle(charge.title);
+    setChargeAmount(String(charge.amount));
+    setChargeDate(charge.spentAt);
+  };
+
+  const deleteCharge = async (chargeId: string) => {
+    if (!selected) return;
+    const next = cards.map((card) => card.id === selected.id ? { ...card, charges: card.charges.filter((charge) => charge.id !== chargeId), payments: card.payments.filter((payment) => payment.chargeId !== chargeId) } : card);
+    await persist(next);
+    if (editingChargeId === chargeId) resetChargeForm();
   };
 
   const addPayment = async () => {
@@ -146,18 +195,19 @@ export default function CreditCardsScreen() {
               <Text style={{ color: colors.textMuted, marginTop: 4 }}>Лимит: {money(selected.limitAmount)} · доступно: {money(availableLimit)}</Text>
             </View>
           </View>
-          <View style={{ marginTop: spacing(1.5) }}>
-            <Text style={{ color: colors.expense, fontFamily: appFont, fontSize: 26, fontWeight: '800' }}>Долг: {money(totalDebt)}</Text>
-          </View>
+          <View style={{ marginTop: spacing(1.5) }}><Text style={{ color: colors.expense, fontFamily: appFont, fontSize: 26, fontWeight: '800' }}>Долг: {money(totalDebt)}</Text></View>
           <View style={{ marginTop: spacing(1) }}><Button title="Удалить карту" variant="danger" onPress={() => deleteCard(selected.id)} /></View>
         </Card>
 
         <Card style={{ marginBottom: spacing(1.5) }}>
-          <Text style={{ color: colors.text, fontFamily: appFont, fontSize: 18, fontWeight: '700', marginBottom: spacing(1) }}>Новая покупка</Text>
+          <Text style={{ color: colors.text, fontFamily: appFont, fontSize: 18, fontWeight: '700', marginBottom: spacing(1) }}>{editingChargeId ? 'Редактировать покупку' : 'Новая покупка'}</Text>
           <Field label="Описание" value={chargeTitle} onChangeText={setChargeTitle} placeholder="Покупка" />
           <Field label="Сумма, ₽" value={chargeAmount} onChangeText={setChargeAmount} keyboardType="decimal-pad" placeholder="50000" />
           <Field label="Дата покупки" value={chargeDate} onChangeText={setChargeDate} placeholder="2026-06-02" />
-          <Button title="Добавить покупку" onPress={addCharge} />
+          <View style={{ gap: spacing(1) }}>
+            <Button title={editingChargeId ? 'Сохранить покупку' : 'Добавить покупку'} onPress={addOrUpdateCharge} />
+            {editingChargeId ? <Button title="Отменить редактирование" variant="ghost" onPress={resetChargeForm} /> : null}
+          </View>
         </Card>
 
         <Card style={{ marginBottom: spacing(1.5) }}>
@@ -169,7 +219,16 @@ export default function CreditCardsScreen() {
         </Card>
 
         <Text style={{ color: colors.textMuted, fontFamily: appFont, fontWeight: '700', marginBottom: spacing(1) }}>Открытые покупки</Text>
-        {openCharges.length ? openCharges.map((charge) => <Card key={charge.id} style={{ marginBottom: spacing(1) }}><View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: spacing(1) }}><View style={{ flex: 1 }}><Text style={{ color: colors.text, fontFamily: appFont, fontWeight: '700' }}>{charge.title}</Text><Text style={{ color: colors.textMuted, fontSize: 12, marginTop: 4 }}>{new Date(charge.spentAt).toLocaleDateString('ru-RU')} · осталось {daysLeft(charge)} дней</Text></View><View style={{ alignItems: 'flex-end' }}><Text style={{ color: colors.expense, fontFamily: appFont, fontWeight: '800' }}>{money(charge.remainingAmount)}</Text><Text style={{ color: colors.textMuted, fontSize: 12 }}>из {money(charge.amount)}</Text></View></View></Card>) : <Text style={{ color: colors.textMuted }}>Открытых задолженностей нет.</Text>}
+        {openCharges.length ? openCharges.map((charge) => <Card key={charge.id} style={{ marginBottom: spacing(1) }}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: spacing(1) }}>
+            <View style={{ flex: 1 }}><Text style={{ color: colors.text, fontFamily: appFont, fontWeight: '700' }}>{charge.title}</Text><Text style={{ color: colors.textMuted, fontSize: 12, marginTop: 4 }}>{new Date(charge.spentAt).toLocaleDateString('ru-RU')} · осталось {daysLeft(charge)} дней</Text></View>
+            <View style={{ alignItems: 'flex-end' }}><Text style={{ color: colors.expense, fontFamily: appFont, fontWeight: '800' }}>{money(charge.remainingAmount)}</Text><Text style={{ color: colors.textMuted, fontSize: 12 }}>из {money(charge.amount)}</Text></View>
+          </View>
+          <View style={{ flexDirection: 'row', gap: spacing(1), marginTop: spacing(1.25) }}>
+            <Pressable onPress={() => editCharge(charge)} style={{ flex: 1, paddingVertical: spacing(1), borderRadius: radius.pill, alignItems: 'center', backgroundColor: colors.primarySoft }}><Text style={{ color: colors.primary, fontFamily: appFont, fontWeight: '600' }}>Изменить</Text></Pressable>
+            <Pressable onPress={() => deleteCharge(charge.id)} style={{ flex: 1, paddingVertical: spacing(1), borderRadius: radius.pill, alignItems: 'center', backgroundColor: colors.redSoft }}><Text style={{ color: colors.expense, fontFamily: appFont, fontWeight: '600' }}>Удалить</Text></Pressable>
+          </View>
+        </Card>) : <Text style={{ color: colors.textMuted }}>Открытых задолженностей нет.</Text>}
       </> : null}
     </ScrollView>
   );
