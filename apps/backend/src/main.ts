@@ -1,6 +1,7 @@
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe, Logger } from '@nestjs/common';
 import { NestExpressApplication } from '@nestjs/platform-express';
+import { json, urlencoded } from 'express';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { join } from 'path';
 import { AppModule } from './app.module';
@@ -8,6 +9,10 @@ import { AppModule } from './app.module';
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, { cors: false });
   const logger = new Logger('Bootstrap');
+
+  // Импорт чеков/скринов приходит base64 внутри JSON. Лимит нужен выше дефолтного express.
+  app.use(json({ limit: '8mb' }));
+  app.use(urlencoded({ extended: true, limit: '8mb' }));
 
   // Раздаём локально сохранённые скриншоты чеков (STORAGE_DRIVER=local).
   const uploadsDir = process.env.STORAGE_LOCAL_DIR ?? './uploads';
