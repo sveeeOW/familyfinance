@@ -35,6 +35,48 @@ export class AiService {
     @Inject(RECEIPT_PARSER) private readonly parser: ReceiptParser,
   ) {}
 
+  getProviderStatus() {
+    const provider = (process.env.AI_PROVIDER ?? '').toLowerCase();
+    const hasOpenAiApiKey = Boolean(process.env.OPENAI_API_KEY);
+    const hasAnthropicApiKey = Boolean(process.env.ANTHROPIC_API_KEY);
+
+    let selectedProvider: 'openai' | 'claude' | 'mock' = 'mock';
+    let reason = 'Нет OPENAI_API_KEY и ANTHROPIC_API_KEY — выбран mock.';
+
+    if (provider === 'mock') {
+      selectedProvider = 'mock';
+      reason = 'AI_PROVIDER=mock — явно выбран mock.';
+    } else if (provider === 'openai') {
+      selectedProvider = hasOpenAiApiKey ? 'openai' : 'mock';
+      reason = hasOpenAiApiKey
+        ? 'AI_PROVIDER=openai и OPENAI_API_KEY задан — должен работать OpenAI Vision.'
+        : 'AI_PROVIDER=openai, но OPENAI_API_KEY не виден backend — выбран mock.';
+    } else if (provider === 'claude' || provider === 'anthropic') {
+      selectedProvider = hasAnthropicApiKey ? 'claude' : 'mock';
+      reason = hasAnthropicApiKey
+        ? 'AI_PROVIDER=claude/anthropic и ANTHROPIC_API_KEY задан — должен работать Claude.'
+        : 'AI_PROVIDER=claude/anthropic, но ANTHROPIC_API_KEY не виден backend — выбран mock.';
+    } else if (hasOpenAiApiKey) {
+      selectedProvider = 'openai';
+      reason = 'AI_PROVIDER не задан, но OPENAI_API_KEY есть — автоматически выбран OpenAI.';
+    } else if (hasAnthropicApiKey) {
+      selectedProvider = 'claude';
+      reason = 'AI_PROVIDER не задан, но ANTHROPIC_API_KEY есть — автоматически выбран Claude.';
+    }
+
+    return {
+      selectedProvider,
+      reason,
+      aiProviderEnv: process.env.AI_PROVIDER ?? null,
+      hasOpenAiApiKey,
+      hasAnthropicApiKey,
+      aiModel: process.env.AI_MODEL ?? null,
+      aiMaxTokens: process.env.AI_MAX_TOKENS ?? null,
+      saveRecognitionFiles: process.env.SAVE_RECOGNITION_FILES === 'true',
+      recognitionTempFileTtlMinutes: process.env.RECOGNITION_TEMP_FILE_TTL_MINUTES ?? null,
+    };
+  }
+
   async recognizeText(params: { text: string; userId: string; portfolioId: string }): Promise<RecognitionDraft> {
     const categories = await this.categoryNames(params.portfolioId);
     const history = await this.merchantHistory(params.userId, params.portfolioId);
