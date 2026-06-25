@@ -17,14 +17,18 @@ import { ExpensesModule } from '../expenses/expenses.module';
     MockReceiptParser,
     OpenAiReceiptParser,
     {
-      // Выбор провайдера распознавания по AI_PROVIDER (openai | claude | mock).
+      // Выбор провайдера распознавания по AI_PROVIDER.
+      // Если AI_PROVIDER не задан, берём первый доступный реальный ключ.
+      // Mock включается только явно или если нет ни одного AI-ключа.
       provide: RECEIPT_PARSER,
       useFactory: (openai: OpenAiReceiptParser, claude: ClaudeReceiptParser, mock: MockReceiptParser) => {
-        const provider = (process.env.AI_PROVIDER ?? 'claude').toLowerCase();
-        if (provider === 'openai' && process.env.OPENAI_API_KEY) return openai;
+        const provider = (process.env.AI_PROVIDER ?? '').toLowerCase();
         if (provider === 'mock') return mock;
-        if (!process.env.ANTHROPIC_API_KEY) return mock;
-        return claude;
+        if (provider === 'openai') return process.env.OPENAI_API_KEY ? openai : mock;
+        if (provider === 'claude' || provider === 'anthropic') return process.env.ANTHROPIC_API_KEY ? claude : mock;
+        if (process.env.OPENAI_API_KEY) return openai;
+        if (process.env.ANTHROPIC_API_KEY) return claude;
+        return mock;
       },
       inject: [OpenAiReceiptParser, ClaudeReceiptParser, MockReceiptParser],
     },
