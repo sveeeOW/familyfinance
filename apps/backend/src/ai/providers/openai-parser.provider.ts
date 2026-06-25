@@ -3,6 +3,7 @@ import {
   ParseImageInput,
   ParsePdfInput,
   ParseTextInput,
+  ParsedOperationType,
   ParsedReceipt,
   ReceiptParser,
 } from '../receipt-parser.interface';
@@ -12,48 +13,48 @@ import { buildSystemPrompt, parseModelJson } from '../prompt';
 export class OpenAiReceiptParser implements ReceiptParser {
   private readonly logger = new Logger(OpenAiReceiptParser.name);
   private readonly apiUrl = 'https://api.openai.com/v1/responses';
-  private readonly model = process.env.AI_MODEL ?? 'gpt-5.5';
-  private readonly maxOutputTokens = Number(process.env.AI_MAX_TOKENS ?? 1800);
+  private readonly model = process.env.AI_MODEL ?? 'gpt-4o-mini';
+  private readonly maxOutputTokens = Number(process.env.AI_MAX_TOKENS ?? 2200);
 
   async parseImage(input: ParseImageInput): Promise<ParsedReceipt> {
     const system = buildSystemPrompt(input.availableCategories, input.previousMerchantCategories);
     const text = await this.createResponse([
-      {
-        role: 'system',
-        content: [{ type: 'input_text', text: system }],
-      },
+      { role: 'system', content: [{ type: 'input_text', text: system }] },
       {
         role: 'user',
         content: [
-          {
-            type: 'input_text',
-            text: 'Распознай финансовую операцию на изображении. Верни строго JSON по системному формату.',
-          },
-          {
-            type: 'input_image',
-            image_url: `data:${input.mimeType};base64,${input.imageBase64}`,
-          },
+          { type: 'input_text', text: 'Распознай финансовую операцию на изображении. Верни строго JSON по системному формату.' },
+          { type: 'input_image', image_url: `data:${input.mimeType};base64,${input.imageBase64}` },
         ],
       },
     ]);
     return this.safeParseSingle(text);
   }
 
-  async parseText(input: ParseTextInput): Promise<ParsedReceipt> {
-    const system = buildSystemPrompt(input.availableCategories, input.previousMerchantCategories);
+  async parseOperationsImage(input: ParseImageInput): Promise<ParsedReceipt[]> {
     const text = await this.createResponse([
       {
         role: 'system',
-        content: [{ type: 'input_text', text: system }],
+        content: [{ type: 'input_text', text: this.buildOperationsPrompt(input.availableCategories, input.previousMerchantCategories) }],
       },
       {
         role: 'user',
         content: [
-          {
-            type: 'input_text',
-            text: `Сообщение о трате: "${input.text}". Верни строго JSON по системному формату.`,
-          },
+          { type: 'input_text', text: 'Найди все финансовые операции на изображении. Верни массив operations. Не придумывай суммы, если они не видны.' },
+          { type: 'input_image', image_url: `data:${input.mimeType};base64,${input.imageBase64}` },
         ],
+      },
+    ]);
+    return this.safeParseMany(text);
+  }
+
+  async parseText(input: ParseTextInput): Promise<ParsedReceipt> {
+    const system = buildSystemPrompt(input.availableCategories, input.previousMerchantCategories);
+    const text = await this.createResponse([
+      { role: 'system', content: [{ type: 'input_text', text: system }] },
+      {
+        role: 'user',
+        content: [{ type: 'input_text', text: `Сообщение о трате: "${input.text}". Верни строго JSON по системному формату.` }],
       },
     ]);
     const parsed = this.safeParseSingle(text);
@@ -61,57 +62,82 @@ export class OpenAiReceiptParser implements ReceiptParser {
     return parsed;
   }
 
-  async parsePdfStatement(input: ParsePdfInput): Promise<ParsedReceipt[]> {
-    const categories = input.availableCategories.join(', ');
-    const prompt = `Ты — модуль разбора банковских выписок для приложения семейных финансов.
-Из PDF-выписки извлеки операции списания и покупки. Возвраты, переводы между своими счетами и технические операции не включай, если они не являются расходом.
-Верни СТРОГО валидный JSON без markdown и пояснений.
+  async parseOperationsText(input: ParseTextInput): Promise<ParsedReceipt[]> {
+    const text = await this.createResponse([
+      {
+        role: 'system',
+        content: [{ type: 'input_text', text: this.buildOperationsPrompt(input.availableCategories, input.previousMerchantCategories) }],
+      },
+      {
+        role: 'user',
+        content: [{ type: 'input_text', text: `Найди все финансовые операции в тексте и верни массив operations:\n\n${input.text}` }],
+      },
+    ]);
+    return this.safeParseMany(text).map((operation) => ({ ...operation, extractedText: operation.extractedText ?? input.text }));
+  }
 
-Доступные категории: ${categories}.
+  async parsePdfStatement(input: ParsePdfInput): Promise<ParsedReceipt[]> {
+    const text = await this.createResponse([
+      {
+        role: 'system',
+        content: [{ type: 'input_text', text: this.buildOperationsPrompt(input.availableCategories, input.previousMerchantCategories) }],
+      },
+      {
+        role: 'user',
+        content: [
+          { type: 'input_file', filename: input.filename || 'bank-statement.pdf', file_data: `data:application/pdf;base64,${input.fileBase64}` },
+          { type: 'input_text', text: `Это PDF-документ ${input.filename}: квитанция, справка по операции или банковская выписка. Найди все финансовые операции.` },
+        ],
+      },
+    ]);
+    return this.safeParseMany(text);
+  }
+
+  async parseOperationsPdf(input: ParsePdfInput): Promise<ParsedReceipt[]> {
+    return this.parsePdfStatement(input);
+  }
+
+  private buildOperationsPrompt(categories: string[], history?: { merchant: string; category: string }[]) {
+    const categoryList = categories.join(', ');
+    const historyBlock = history?.length
+      ? `\nИстория категорий пользователя:\n${history.map((h) => `- "${h.merchant}" → ${h.category}`).join('\n')}`
+      : '';
+
+    return `Ты — модуль импорта финансовых операций для приложения учёта денег.
+На вход может прийти фото чека, скрин банковского приложения, PDF-квитанция, справка по операции или банковская выписка.
+Найди ВСЕ финансовые операции и верни СТРОГО валидный JSON без markdown.
+
+Доступные категории: ${categoryList}.${historyBlock}
+
+Правила:
+- Верни массив operations. Даже если операция одна — верни массив из одного объекта.
+- type: "expense" для списаний/покупок/платежей, "income" для поступлений, "transfer" для перевода между своими счетами, "unknown" если непонятно.
+- amount — число без пробелов и символа валюты.
+- currency — RUB, USD, EUR и т.п.; по умолчанию RUB.
+- date — YYYY-MM-DD или null.
+- merchant — магазин, банк, получатель, отправитель или контрагент.
+- category — строго одно значение из списка категорий; если не уверен — "Другое".
+- Если на изображении виден список категорий расходов, создай отдельную операцию по каждой строке с суммой.
+- Если непонятно расход это или доход — type="unknown", needs_clarification=true.
+- confidence 0..100.
 
 Формат ответа:
 {
   "operations": [
     {
       "type": "expense",
-      "amount": 4850,
+      "amount": 14549.27,
       "currency": "RUB",
-      "date": "2026-06-22",
-      "merchant": "АЗС Газпромнефть",
-      "description": "Покупка топлива",
-      "category": "Топливо",
-      "confidence": 90,
+      "date": "2026-06-25",
+      "merchant": "Продукты",
+      "description": "Расходы по категории Продукты",
+      "category": "Продукты",
+      "confidence": 82,
       "needs_clarification": false,
       "clarification_question": null
     }
   ]
-}
-
-Правила:
-- amount — положительное число без пробелов и валюты.
-- date — YYYY-MM-DD, если дата есть.
-- category — строго одна из доступных категорий; если не уверен, выбери "Другое".
-- confidence — 0..100.
-- Если выписка длинная, верни максимум 20 наиболее явных расходов.`;
-
-    const text = await this.createResponse([
-      {
-        role: 'user',
-        content: [
-          {
-            type: 'input_file',
-            filename: input.filename || 'bank-statement.pdf',
-            file_data: `data:application/pdf;base64,${input.fileBase64}`,
-          },
-          {
-            type: 'input_text',
-            text: prompt,
-          },
-        ],
-      },
-    ]);
-
-    return this.safeParseMany(text);
+}`;
   }
 
   private async createResponse(input: unknown[]) {
@@ -120,41 +146,27 @@ export class OpenAiReceiptParser implements ReceiptParser {
 
     const response = await fetch(this.apiUrl, {
       method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: this.model,
-        input,
-        max_output_tokens: this.maxOutputTokens,
-      }),
+      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: this.model, input, max_output_tokens: this.maxOutputTokens }),
     });
 
     const data = await response.json().catch(() => null);
-    if (!response.ok) {
-      const message = data?.error?.message ?? `OpenAI API error ${response.status}`;
-      throw new Error(message);
-    }
-
+    if (!response.ok) throw new Error(data?.error?.message ?? `OpenAI API error ${response.status}`);
     return this.extractOutputText(data);
   }
 
   private extractOutputText(data: any): string {
     if (typeof data?.output_text === 'string') return data.output_text;
-
     const pieces: string[] = [];
-    for (const item of data?.output ?? []) {
-      for (const content of item?.content ?? []) {
-        if (typeof content?.text === 'string') pieces.push(content.text);
-      }
-    }
+    for (const item of data?.output ?? []) for (const content of item?.content ?? []) if (typeof content?.text === 'string') pieces.push(content.text);
     return pieces.join('\n');
   }
 
   private safeParseSingle(text: string): ParsedReceipt {
     try {
-      return parseModelJson(text);
+      const parsed = parseModelJson(text);
+      parsed.extractedText = parsed.extractedText ?? text;
+      return parsed;
     } catch (error) {
       this.logger.error(`Не удалось разобрать ответ OpenAI: ${(error as Error).message}`);
       return this.fallback(text);
@@ -163,38 +175,46 @@ export class OpenAiReceiptParser implements ReceiptParser {
 
   private safeParseMany(text: string): ParsedReceipt[] {
     try {
-      const jsonStart = text.indexOf('{');
-      const jsonEnd = text.lastIndexOf('}');
-      const slice = jsonStart >= 0 && jsonEnd >= 0 ? text.slice(jsonStart, jsonEnd + 1) : text;
+      const jsonStartObj = text.indexOf('{');
+      const jsonStartArr = text.indexOf('[');
+      const useArray = jsonStartArr >= 0 && (jsonStartObj < 0 || jsonStartArr < jsonStartObj);
+      const start = useArray ? jsonStartArr : jsonStartObj;
+      const end = useArray ? text.lastIndexOf(']') : text.lastIndexOf('}');
+      const slice = start >= 0 && end >= 0 ? text.slice(start, end + 1) : text;
       const data = JSON.parse(slice);
-      const operations = Array.isArray(data.operations) ? data.operations : [];
-      return operations.map((operation: any) => this.normalize(operation)).filter((operation) => operation.amount);
+      const operations = Array.isArray(data) ? data : Array.isArray(data.operations) ? data.operations : [];
+      return operations.map((operation: any) => this.normalize(operation, text)).filter((operation) => operation.amount != null || operation.description || operation.merchant);
     } catch (error) {
-      this.logger.error(`Не удалось разобрать PDF-выписку: ${(error as Error).message}`);
-      return [];
+      this.logger.error(`Не удалось разобрать массив операций: ${(error as Error).message}`);
+      return [this.fallback(text)];
     }
   }
 
-  private normalize(data: any): ParsedReceipt {
-    const confidence = this.clamp(data.confidence);
+  private normalize(data: any, raw: string): ParsedReceipt {
+    const confidence = this.clamp(data?.confidence);
+    const type = this.normalizeType(data?.type);
     return {
-      type: data.type === 'income' ? 'income' : 'expense',
-      amount: typeof data.amount === 'number' ? data.amount : data.amount ? Number(String(data.amount).replace(/\s/g, '').replace(',', '.')) : null,
-      currency: data.currency ?? 'RUB',
-      date: data.date ?? null,
-      merchant: data.merchant ?? null,
-      description: data.description ?? null,
-      category: data.category ?? null,
+      type,
+      amount: typeof data?.amount === 'number' ? data.amount : data?.amount ? Number(String(data.amount).replace(/\s/g, '').replace(',', '.')) : null,
+      currency: data?.currency ?? 'RUB',
+      date: data?.date ?? null,
+      merchant: data?.merchant ?? null,
+      description: data?.description ?? null,
+      category: data?.category ?? null,
       confidence,
-      needsClarification: Boolean(data.needs_clarification) || confidence < 70,
-      clarificationQuestion: data.clarification_question ?? null,
-      extractedText: data.description ?? data.merchant ?? null,
+      needsClarification: Boolean(data?.needs_clarification) || type === 'unknown' || confidence < 70,
+      clarificationQuestion: data?.clarification_question ?? (type === 'unknown' ? 'Это расход, доход, перевод или не учитывать?' : null),
+      extractedText: data?.extractedText ?? raw,
     };
+  }
+
+  private normalizeType(value: unknown): ParsedOperationType {
+    return value === 'income' || value === 'transfer' || value === 'unknown' ? value : 'expense';
   }
 
   private fallback(text: string): ParsedReceipt {
     return {
-      type: 'expense',
+      type: 'unknown',
       amount: null,
       currency: 'RUB',
       date: null,
@@ -203,7 +223,7 @@ export class OpenAiReceiptParser implements ReceiptParser {
       category: null,
       confidence: 0,
       needsClarification: true,
-      clarificationQuestion: 'Не удалось распознать операцию. Опишите трату текстом, пожалуйста.',
+      clarificationQuestion: 'Не удалось распознать операцию. Попробуйте другой файл или опишите операцию текстом.',
       extractedText: text,
     };
   }
