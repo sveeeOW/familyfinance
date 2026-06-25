@@ -9,10 +9,16 @@ interface PortfolioState {
   load: () => Promise<void>;
   select: (id: string) => void;
   selected: () => Portfolio | null;
+  personal: () => Portfolio | null;
+  shared: () => Portfolio[];
 }
 
-function visiblePortfolios(items: Portfolio[]) {
-  return items.filter((portfolio) => portfolio.type !== 'PERSONAL');
+function defaultPortfolio(items: Portfolio[]) {
+  return items.find((portfolio) => portfolio.isDefault) ?? items.find((portfolio) => portfolio.type === 'PERSONAL') ?? items[0] ?? null;
+}
+
+function sharedPortfolios(items: Portfolio[]) {
+  return items.filter((portfolio) => portfolio.type !== 'PERSONAL' || (portfolio.members?.length ?? 0) > 1);
 }
 
 export const usePortfolios = create<PortfolioState>((set, get) => ({
@@ -23,12 +29,13 @@ export const usePortfolios = create<PortfolioState>((set, get) => ({
   load: async () => {
     set({ loading: true });
     try {
-      const portfolios = visiblePortfolios(await api.portfolios());
+      const portfolios = await api.portfolios();
       set((s) => {
         const selectedStillExists = portfolios.some((p) => p.id === s.selectedId);
+        const fallback = defaultPortfolio(portfolios);
         return {
           portfolios,
-          selectedId: selectedStillExists ? s.selectedId : portfolios[0]?.id ?? null,
+          selectedId: selectedStillExists ? s.selectedId : fallback?.id ?? null,
         };
       });
     } finally {
@@ -37,5 +44,7 @@ export const usePortfolios = create<PortfolioState>((set, get) => ({
   },
 
   select: (id) => set({ selectedId: id }),
-  selected: () => get().portfolios.find((p) => p.id === get().selectedId) ?? null,
+  selected: () => get().portfolios.find((p) => p.id === get().selectedId) ?? defaultPortfolio(get().portfolios),
+  personal: () => defaultPortfolio(get().portfolios),
+  shared: () => sharedPortfolios(get().portfolios),
 }));
