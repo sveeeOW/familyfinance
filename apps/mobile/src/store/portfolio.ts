@@ -11,6 +11,10 @@ interface PortfolioState {
   selected: () => Portfolio | null;
 }
 
+function visiblePortfolios(items: Portfolio[]) {
+  return items.filter((portfolio) => portfolio.type !== 'PERSONAL');
+}
+
 export const usePortfolios = create<PortfolioState>((set, get) => ({
   portfolios: [],
   selectedId: null,
@@ -19,11 +23,14 @@ export const usePortfolios = create<PortfolioState>((set, get) => ({
   load: async () => {
     set({ loading: true });
     try {
-      const portfolios = await api.portfolios();
-      set((s) => ({
-        portfolios,
-        selectedId: s.selectedId ?? portfolios.find((p) => p.isDefault)?.id ?? portfolios[0]?.id ?? null,
-      }));
+      const portfolios = visiblePortfolios(await api.portfolios());
+      set((s) => {
+        const selectedStillExists = portfolios.some((p) => p.id === s.selectedId);
+        return {
+          portfolios,
+          selectedId: selectedStillExists ? s.selectedId : portfolios[0]?.id ?? null,
+        };
+      });
     } finally {
       set({ loading: false });
     }
