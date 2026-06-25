@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Post, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { AiService } from './ai.service';
 import {
@@ -18,6 +18,11 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 @Controller('ai')
 export class AiController {
   constructor(private readonly ai: AiService) {}
+
+  @Get('provider-status')
+  providerStatus() {
+    return this.ai.getProviderStatus();
+  }
 
   @Post('recognize-expense')
   async recognize(@CurrentUser('userId') userId: string, @Body() dto: RecognizeImageDto & RecognizeTextDto) {
