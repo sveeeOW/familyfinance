@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, Image, Pressable, ScrollView, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, Text, View } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system';
 import * as ImageManipulator from 'expo-image-manipulator';
@@ -36,12 +36,10 @@ type ImportDraft = {
 
 type Selection = { action: OperationAction; categoryId: string | null; comment?: string };
 
-const MAX_IMPORT_WIDTH = 1100;
-const MAX_BASE64_SIZE = 2800000;
+const MAX_BASE64_SIZE = 950000;
 
 export default function ScanReceiptScreen({ navigation }: any) {
   const { selectedId, load: loadPortfolios } = usePortfolios();
-  const [preview, setPreview] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<ImportDraft[]>([]);
   const [selections, setSelections] = useState<Record<string, Selection>>({});
   const [categories, setCategories] = useState<Category[]>([]);
@@ -50,25 +48,16 @@ export default function ScanReceiptScreen({ navigation }: any) {
   const [statusText, setStatusText] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    loadPortfolios().catch(() => {});
-  }, [loadPortfolios]);
-
-  useEffect(() => {
-    if (selectedId) api.categories(selectedId).then(setCategories).catch(() => {});
-  }, [selectedId]);
+  useEffect(() => { loadPortfolios().catch(() => {}); }, [loadPortfolios]);
+  useEffect(() => { if (selectedId) api.categories(selectedId).then(setCategories).catch(() => {}); }, [selectedId]);
 
   const importFile = async () => {
     setError(null);
     if (!selectedId) {
-      setError('Сначала создайте или выберите портфель. Без портфеля операции некуда добавить.');
+      setError('Личный профиль ещё загружается. Подождите пару секунд и попробуйте снова.');
       return;
     }
-    const result = await DocumentPicker.getDocumentAsync({
-      copyToCacheDirectory: true,
-      multiple: false,
-      type: ['image/*', 'application/pdf'],
-    });
+    const result = await DocumentPicker.getDocumentAsync({ copyToCacheDirectory: true, multiple: false, type: ['image/*', 'application/pdf'] });
     if (result.canceled) return;
     const asset = result.assets?.[0] as any;
     if (!asset?.uri) return;
@@ -78,7 +67,7 @@ export default function ScanReceiptScreen({ navigation }: any) {
   const takePhoto = async () => {
     setError(null);
     if (!selectedId) {
-      setError('Сначала создайте или выберите портфель. Без портфеля операции некуда добавить.');
+      setError('Личный профиль ещё загружается. Подождите пару секунд и попробуйте снова.');
       return;
     }
     const perm = await ImagePicker.requestCameraPermissionsAsync();
@@ -86,7 +75,7 @@ export default function ScanReceiptScreen({ navigation }: any) {
       setError('Нет доступа к камере. Разрешите доступ в настройках.');
       return;
     }
-    const result = await ImagePicker.launchCameraAsync({ base64: false, quality: 0.65 });
+    const result = await ImagePicker.launchCameraAsync({ base64: false, quality: 0.5 });
     if (result.canceled) return;
     const asset = result.assets?.[0];
     if (!asset?.uri) return;
@@ -95,11 +84,11 @@ export default function ScanReceiptScreen({ navigation }: any) {
 
   const processPickedFile = async (uri: string, mimeType: string, filename: string, width?: number | null) => {
     if (!selectedId) return;
-    setPreview(mimeType.includes('pdf') ? null : uri);
     setDrafts([]);
     setSelections({});
     setLoading(true);
-    setStatusText('Готовлю файл к импорту…');
+    setStatusText('Готовлю файл к анализу…');
+    setError(null);
 
     try {
       let fileBase64: string;
@@ -108,40 +97,34 @@ export default function ScanReceiptScreen({ navigation }: any) {
         setStatusText('Читаю PDF-документ…');
         fileBase64 = await readBase64(uri);
         finalMime = 'application/pdf';
+        if (fileBase64.length > 3500000) throw new Error('PDF слишком большой для импорта. Сохраните одну страницу или отправьте скрин нужного фрагмента.');
       } else {
-        setStatusText('Сжимаю изображение без сохранения файла…');
+        setStatusText('Сжимаю изображение для AI-анализа…');
         const prepared = await prepareImageForImport(uri, width);
         fileBase64 = prepared.base64;
         finalMime = 'image/jpeg';
-        setPreview(prepared.uri);
       }
 
-      if (fileBase64.length > MAX_BASE64_SIZE && !finalMime.includes('pdf')) {
-        setError('Изображение всё ещё крупное. Я попробовал сжать его автоматически, но файл может не пройти лимит Vercel. Попробуйте обрезать лишние поля или отправить PDF/скрин меньшего размера.');
-      }
-
-      setStatusText('ИИ ищет операции в документе…');
+      setStatusText('ИИ анализирует изображение и ищет операции…');
       const imported = await request<ImportDraft[]>('/ai/import-operations', {
         method: 'POST',
         body: { portfolioId: selectedId, fileBase64, mimeType: finalMime, filename },
       });
 
-      setDrafts(imported);
+      setDrafts(Array.isArray(imported) ? imported : []);
       const initial: Record<string, Selection> = {};
-      for (const item of imported) {
+      for (const item of imported ?? []) {
         initial[item.logId] = {
           action: item.suggestedAction ?? (item.operationType === 'income' ? 'income' : item.operationType === 'expense' ? 'expense' : 'skip'),
           categoryId: item.resolvedCategoryId,
         };
       }
       setSelections(initial);
-      if (!imported.length) {
-        setError('ИИ не нашёл операций. Попробуйте другой файл или добавьте расход вручную.');
-      }
+      if (!imported?.length) setError('ИИ не нашёл операций в файле. Попробуйте обрезать скрин до области с суммами или загрузить другой файл.');
     } catch (e: any) {
       const message = e?.status === 413
-        ? 'Файл слишком большой для текущего лимита Vercel. Следующий шаг — резать длинные скрины на части перед отправкой. Пока попробуйте PDF или скрин меньшего размера.'
-        : e.message ?? 'Не удалось импортировать операции. Попробуйте другой файл или добавьте вручную.';
+        ? 'Файл не прошёл лимит даже после сжатия. Я уменьшил лимиты и сжатие, обновите приложение и попробуйте этот же скрин ещё раз.'
+        : e.message ?? 'Не удалось импортировать операции. Попробуйте другой файл.';
       setError(message);
     } finally {
       setLoading(false);
@@ -150,24 +133,14 @@ export default function ScanReceiptScreen({ navigation }: any) {
   };
 
   const updateSelection = (logId: string, patch: Partial<Selection>) => {
-    setSelections((current) => ({
-      ...current,
-      [logId]: { ...(current[logId] ?? { action: 'skip', categoryId: null }), ...patch },
-    }));
+    setSelections((current) => ({ ...current, [logId]: { ...(current[logId] ?? { action: 'skip', categoryId: null }), ...patch } }));
   };
 
   const confirm = async () => {
     const operations = drafts.map((draft) => {
       const selection = selections[draft.logId] ?? { action: 'skip', categoryId: null };
-      if (!draft.parsed.amount && selection.action !== 'skip') {
-        return { logId: draft.logId, action: 'skip' as OperationAction };
-      }
-      return {
-        logId: draft.logId,
-        action: selection.action,
-        categoryId: selection.categoryId ?? undefined,
-        comment: selection.comment,
-      };
+      if (!draft.parsed.amount && selection.action !== 'skip') return { logId: draft.logId, action: 'skip' as OperationAction };
+      return { logId: draft.logId, action: selection.action, categoryId: selection.categoryId ?? undefined, comment: selection.comment };
     });
     if (!operations.some((operation) => operation.action !== 'skip')) {
       setError('Выберите хотя бы одну операцию для добавления.');
@@ -194,22 +167,11 @@ export default function ScanReceiptScreen({ navigation }: any) {
         <Button title="Сделать фото" icon="camera" variant="ghost" onPress={takePhoto} disabled={loading || saving} />
       </View>
 
-      {!selectedId ? (
-        <Card style={{ borderColor: colors.warning, marginBottom: spacing(2) }}>
-          <Text style={{ color: colors.warning, fontWeight: '600' }}>Портфель не выбран</Text>
-          <Text style={{ color: colors.textMuted, marginTop: 6 }}>Создайте или выберите портфель, чтобы импортировать операции.</Text>
-        </Card>
-      ) : null}
-
-      {preview ? (
-        <Image source={{ uri: preview }} style={{ width: '100%', height: 220, borderRadius: radius.lg, marginBottom: spacing(2), backgroundColor: colors.cardAlt }} resizeMode="cover" />
-      ) : null}
-
       {loading ? (
         <Card style={{ alignItems: 'center', marginBottom: spacing(2) }}>
           <ActivityIndicator color={colors.primary} />
           <Text style={{ color: colors.text, marginTop: spacing(1), fontWeight: '600', textAlign: 'center' }}>{statusText ?? 'Импортирую операции…'}</Text>
-          <Text style={{ color: colors.textMuted, marginTop: 4, textAlign: 'center' }}>Файл не сохраняется — используется только для распознавания.</Text>
+          <Text style={{ color: colors.textMuted, marginTop: 4, textAlign: 'center' }}>Превью не показываю: файл только сжимается и отправляется на анализ.</Text>
         </Card>
       ) : null}
 
@@ -217,9 +179,6 @@ export default function ScanReceiptScreen({ navigation }: any) {
         <Card style={{ borderColor: colors.warning, marginBottom: spacing(2) }}>
           <Text style={{ color: colors.warning, fontWeight: '600' }}>Нужна проверка</Text>
           <Text style={{ color: colors.textMuted, marginTop: 6 }}>{error}</Text>
-          <View style={{ marginTop: spacing(1.5) }}>
-            <Button title="Добавить расход вручную" variant="ghost" onPress={() => navigation.navigate('AddExpense')} />
-          </View>
         </Card>
       ) : null}
 
@@ -233,6 +192,7 @@ export default function ScanReceiptScreen({ navigation }: any) {
                 <Text style={{ color: colors.textMuted, fontWeight: '600', marginBottom: 6 }}>Операция {index + 1}</Text>
                 {draft.duplicateOf ? <Text style={{ color: colors.warning, marginBottom: 6 }}>Похожая операция уже есть.</Text> : null}
                 <Row label="Сумма" value={draft.parsed.amount ? `${fmt(draft.parsed.amount)} ₽` : 'не распознана'} />
+                <Row label="Категория" value={draft.parsed.category ?? categories.find((cat) => cat.id === selection.categoryId)?.name ?? 'не распознана'} />
                 <Row label="Описание" value={draft.parsed.merchant ?? draft.parsed.description ?? '—'} />
                 <Row label="Дата" value={draft.parsed.date ?? '—'} />
                 <Row label="Уверенность" value={`${draft.parsed.confidence}%`} />
@@ -246,12 +206,7 @@ export default function ScanReceiptScreen({ navigation }: any) {
                 </View>
 
                 {selection.action === 'expense' ? (
-                  <CategorySelector
-                    categories={categories}
-                    value={selection.categoryId}
-                    onChange={(categoryId) => updateSelection(draft.logId, { categoryId })}
-                    onAddPress={() => navigation.navigate('Categories')}
-                  />
+                  <CategorySelector categories={categories} value={selection.categoryId} onChange={(categoryId) => updateSelection(draft.logId, { categoryId })} onAddPress={() => navigation.navigate('Categories')} />
                 ) : null}
               </Card>
             );
@@ -269,38 +224,29 @@ async function readBase64(uri: string) {
 
 async function prepareImageForImport(uri: string, width?: number | null): Promise<{ uri: string; base64: string }> {
   const variants = [
-    { width: width && width > MAX_IMPORT_WIDTH ? MAX_IMPORT_WIDTH : undefined, quality: 0.42 },
-    { width: 900, quality: 0.32 },
-    { width: 700, quality: 0.25 },
+    { width: width && width < 760 ? width : 760, quality: 0.42 },
+    { width: 640, quality: 0.34 },
+    { width: 520, quality: 0.28 },
+    { width: 420, quality: 0.24 },
   ];
   let last: { uri: string; base64?: string } | null = null;
   for (const variant of variants) {
     const result = await ImageManipulator.manipulateAsync(
       uri,
-      variant.width ? [{ resize: { width: variant.width } }] : [],
+      [{ resize: { width: variant.width } }],
       { compress: variant.quality, format: ImageManipulator.SaveFormat.JPEG, base64: true },
     );
     last = result;
     if (result.base64 && result.base64.length <= MAX_BASE64_SIZE) return { uri: result.uri, base64: result.base64 };
   }
   if (!last?.base64) throw new Error('Не удалось подготовить изображение для импорта.');
+  if (last.base64.length > MAX_BASE64_SIZE) throw new Error('Скрин слишком большой даже после сжатия. Обрежьте лишние поля вокруг списка операций и попробуйте снова.');
   return { uri: last.uri, base64: last.base64 };
 }
 
 function ActionChip({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
   return (
-    <Pressable
-      onPress={onPress}
-      style={{
-        flex: 1,
-        paddingVertical: spacing(0.9),
-        borderRadius: radius.pill,
-        alignItems: 'center',
-        backgroundColor: active ? colors.accent : colors.cardAlt,
-        borderWidth: 1,
-        borderColor: active ? colors.accent : colors.border,
-      }}
-    >
+    <Pressable onPress={onPress} style={{ flex: 1, paddingVertical: spacing(0.9), borderRadius: radius.pill, alignItems: 'center', backgroundColor: active ? colors.accent : colors.cardAlt, borderWidth: 1, borderColor: active ? colors.accent : colors.border }}>
       <Text style={{ color: active ? colors.accentText : colors.textMuted, fontWeight: '600', fontSize: 12 }}>{label}</Text>
     </Pressable>
   );
