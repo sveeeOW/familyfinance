@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { Alert, FlatList, Pressable, Share, Text, View } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { api } from '../api/endpoints';
@@ -19,8 +19,13 @@ function descriptionWithColor(color: string) {
   return `[iconColor:${color}]`;
 }
 
+function isSharedPortfolio(portfolio: any) {
+  return portfolio.type !== 'PERSONAL' || (portfolio.members?.length ?? 0) > 1;
+}
+
 export default function PortfoliosScreen() {
   const { portfolios, load, select, selectedId } = usePortfolios();
+  const sharedPortfolios = useMemo(() => portfolios.filter(isSharedPortfolio), [portfolios]);
   const [isCreating, setIsCreating] = useState(false);
   const [name, setName] = useState('');
   const [iconColor, setIconColor] = useState(ICON_COLORS[0]);
@@ -119,7 +124,7 @@ export default function PortfoliosScreen() {
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg, padding: spacing(2.5) }}>
       <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: spacing(1.5) }}>
-        <ScreenTitle subtitle="Портфель создаётся только для объединения двух и более пользователей.">Портфели</ScreenTitle>
+        <ScreenTitle subtitle="Профиль работает всегда. Портфель нужен для объединения пользователей.">Портфели</ScreenTitle>
         <Pressable
           onPress={() => setIsCreating((v) => !v)}
           style={({ pressed }) => [
@@ -138,7 +143,7 @@ export default function PortfoliosScreen() {
           <Text style={{ color: colors.textMuted, fontFamily: appFont, fontSize: 13, fontWeight: '600', marginBottom: spacing(0.75) }}>Цвет иконки</Text>
           <ColorDots value={iconColor} onChange={setIconColor} />
           <Text style={{ color: colors.textMuted, fontFamily: appFont, fontSize: 12, marginTop: spacing(1) }}>
-            Личные операции остаются в профиле пользователя. В портфеле объединяются данные участников.
+            Личные доходы и расходы уже доступны в профиле. Здесь создаётся общий портфель для нескольких пользователей.
           </Text>
           <View style={{ flexDirection: 'row', gap: spacing(1), marginTop: spacing(1.5) }}>
             <View style={{ flex: 1 }}><Button title="Отмена" variant="ghost" onPress={() => setIsCreating(false)} disabled={busy} /></View>
@@ -148,7 +153,7 @@ export default function PortfoliosScreen() {
       ) : null}
 
       <FlatList
-        data={portfolios}
+        data={sharedPortfolios}
         keyExtractor={(p) => p.id}
         ItemSeparatorComponent={() => <View style={{ height: spacing(1.5) }} />}
         contentContainerStyle={{ paddingBottom: spacing(10) }}
@@ -208,8 +213,11 @@ export default function PortfoliosScreen() {
         }}
         ListEmptyComponent={
           <Card>
-            <Text style={{ color: colors.text, fontFamily: appFont, fontSize: 16, fontWeight: '600' }}>Портфелей пока нет</Text>
-            <Text style={{ color: colors.textMuted, fontFamily: appFont, marginTop: 6 }}>Создайте портфель, чтобы пригласить партнёра и объединить данные.</Text>
+            <Text style={{ color: colors.text, fontFamily: appFont, fontSize: 16, fontWeight: '600' }}>Общих портфелей пока нет</Text>
+            <Text style={{ color: colors.textMuted, fontFamily: appFont, marginTop: 6 }}>Доходы и расходы можно вести в профиле уже сейчас. Создайте портфель, чтобы пригласить партнёра и объединить статистику.</Text>
+            <View style={{ marginTop: spacing(1.5) }}>
+              <Button title="Создать портфель" onPress={() => setIsCreating(true)} />
+            </View>
           </Card>
         }
       />
