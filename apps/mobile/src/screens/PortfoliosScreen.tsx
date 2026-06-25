@@ -8,14 +8,27 @@ import { Button, Card, Field, IconBubble, ScreenTitle, appFont } from '../compon
 import { TYPE_LABELS } from '../components/PortfolioPicker';
 import { colors, radius, spacing } from '../theme';
 
+const ICON_COLORS = ['#7C3AED', '#2563EB', '#059669', '#F59E0B', '#EF4444', '#0F766E'];
+
+function colorFromDescription(description?: string | null) {
+  const value = description?.split('[iconColor:')[1]?.split(']')[0];
+  return value || '#7C3AED';
+}
+
+function descriptionWithColor(color: string) {
+  return `[iconColor:${color}]`;
+}
+
 export default function PortfoliosScreen() {
   const { portfolios, load, select, selectedId } = usePortfolios();
   const [isCreating, setIsCreating] = useState(false);
   const [name, setName] = useState('');
+  const [iconColor, setIconColor] = useState(ICON_COLORS[0]);
   const [busy, setBusy] = useState(false);
   const [selectingId, setSelectingId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState('');
+  const [editingColor, setEditingColor] = useState(ICON_COLORS[0]);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
@@ -43,10 +56,11 @@ export default function PortfoliosScreen() {
     }
     setBusy(true);
     try {
-      const portfolio = await api.createPortfolio({ name: cleanName, type: 'SHARED' });
+      const portfolio = await api.createPortfolio({ name: cleanName, type: 'SHARED', description: descriptionWithColor(iconColor) } as any);
       await load();
       choosePortfolio(portfolio.id);
       setName('');
+      setIconColor(ICON_COLORS[0]);
       setIsCreating(false);
     } catch (e: any) {
       Alert.alert('Ошибка', e.message ?? 'Не удалось создать портфель');
@@ -58,9 +72,10 @@ export default function PortfoliosScreen() {
   const startEdit = (portfolio: any) => {
     setEditingId(portfolio.id);
     setEditingName(portfolio.name);
+    setEditingColor(colorFromDescription(portfolio.description));
   };
 
-  const saveName = async (portfolioId: string) => {
+  const savePortfolio = async (portfolioId: string) => {
     const cleanName = editingName.trim();
     if (!cleanName) {
       Alert.alert('Название портфеля', 'Название не может быть пустым.');
@@ -68,32 +83,47 @@ export default function PortfoliosScreen() {
     }
     setBusy(true);
     try {
-      await request(`/portfolios/${portfolioId}`, { method: 'PATCH', body: { name: cleanName } });
+      await request(`/portfolios/${portfolioId}`, { method: 'PATCH', body: { name: cleanName, description: descriptionWithColor(editingColor) } });
       await load();
       setEditingId(null);
       setEditingName('');
+      setEditingColor(ICON_COLORS[0]);
     } catch (e: any) {
-      Alert.alert('Ошибка', e.message ?? 'Не удалось изменить название');
+      Alert.alert('Ошибка', e.message ?? 'Не удалось изменить портфель');
     } finally {
       setBusy(false);
     }
   };
 
+  const removePortfolio = (portfolioId: string, portfolioName: string) => {
+    Alert.alert('Удалить портфель?', `Портфель «${portfolioName}» будет удалён вместе с его общими данными.`, [
+      { text: 'Отмена', style: 'cancel' },
+      {
+        text: 'Удалить',
+        style: 'destructive',
+        onPress: async () => {
+          setBusy(true);
+          try {
+            await request(`/portfolios/${portfolioId}`, { method: 'DELETE' });
+            await load();
+          } catch (e: any) {
+            Alert.alert('Ошибка', e.message ?? 'Не удалось удалить портфель');
+          } finally {
+            setBusy(false);
+          }
+        },
+      },
+    ]);
+  };
+
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg, padding: spacing(2.5) }}>
       <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: spacing(1.5) }}>
-        <ScreenTitle subtitle="Профиль хранит личные данные. Портфель объединяет двух и более участников.">Портфели</ScreenTitle>
+        <ScreenTitle subtitle="Портфель создаётся только для объединения двух и более пользователей.">Портфели</ScreenTitle>
         <Pressable
           onPress={() => setIsCreating((v) => !v)}
           style={({ pressed }) => [
-            {
-              backgroundColor: colors.primary,
-              borderRadius: radius.pill,
-              paddingHorizontal: spacing(1.5),
-              height: 42,
-              alignItems: 'center',
-              justifyContent: 'center',
-            },
+            { backgroundColor: colors.primary, borderRadius: radius.pill, paddingHorizontal: spacing(1.5), height: 42, alignItems: 'center', justifyContent: 'center' },
             pressed && { opacity: 0.88 },
           ]}
         >
@@ -103,20 +133,16 @@ export default function PortfoliosScreen() {
 
       {isCreating ? (
         <Card style={{ marginBottom: spacing(1.5) }}>
-          <Text style={{ color: colors.text, fontFamily: appFont, fontSize: 18, fontWeight: '600', marginBottom: spacing(1.5) }}>
-            Новый общий портфель
-          </Text>
+          <Text style={{ color: colors.text, fontFamily: appFont, fontSize: 18, fontWeight: '600', marginBottom: spacing(1.5) }}>Новый портфель</Text>
           <Field label="Название" value={name} onChangeText={setName} placeholder="Например: Семейный" />
-          <Text style={{ color: colors.textMuted, fontFamily: appFont, fontSize: 12, marginTop: -spacing(0.75), marginBottom: spacing(1) }}>
-            Личные доходы и расходы остаются в профиле пользователя. Портфель нужен, чтобы объединить данные участников.
+          <Text style={{ color: colors.textMuted, fontFamily: appFont, fontSize: 13, fontWeight: '600', marginBottom: spacing(0.75) }}>Цвет иконки</Text>
+          <ColorDots value={iconColor} onChange={setIconColor} />
+          <Text style={{ color: colors.textMuted, fontFamily: appFont, fontSize: 12, marginTop: spacing(1) }}>
+            Личные операции остаются в профиле пользователя. В портфеле объединяются данные участников.
           </Text>
           <View style={{ flexDirection: 'row', gap: spacing(1), marginTop: spacing(1.5) }}>
-            <View style={{ flex: 1 }}>
-              <Button title="Отмена" variant="ghost" onPress={() => setIsCreating(false)} disabled={busy} />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Button title="Создать" onPress={create} loading={busy} />
-            </View>
+            <View style={{ flex: 1 }}><Button title="Отмена" variant="ghost" onPress={() => setIsCreating(false)} disabled={busy} /></View>
+            <View style={{ flex: 1 }}><Button title="Создать" onPress={create} loading={busy} /></View>
           </View>
         </Card>
       ) : null}
@@ -128,24 +154,26 @@ export default function PortfoliosScreen() {
         contentContainerStyle={{ paddingBottom: spacing(10) }}
         renderItem={({ item }) => {
           const active = item.id === selectedId;
-          const isPersonal = item.type === 'PERSONAL';
           const members = item.members ?? [];
-          const memberCount = members.length || 1;
           const isSelecting = selectingId === item.id;
           const isEditing = editingId === item.id;
+          const visualColor = isEditing ? editingColor : colorFromDescription(item.description);
 
           return (
             <Card style={{ borderColor: active ? colors.primary : colors.border }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing(1.5) }}>
-                <IconBubble name={isPersonal ? 'wallet' : 'users'} color={isPersonal ? colors.primary : '#7C3AED'} bg={isPersonal ? colors.primarySoft : colors.violetSoft} />
+                <IconBubble name="users" color={visualColor} bg={colors.violetSoft} />
                 <View style={{ flex: 1 }}>
                   {isEditing ? (
-                    <Field label="Название портфеля" value={editingName} onChangeText={setEditingName} placeholder="Название" />
+                    <>
+                      <Field label="Название портфеля" value={editingName} onChangeText={setEditingName} placeholder="Название" />
+                      <ColorDots value={editingColor} onChange={setEditingColor} />
+                    </>
                   ) : (
                     <>
                       <Text style={{ color: colors.text, fontFamily: appFont, fontSize: 18, fontWeight: '600' }}>{item.name}</Text>
                       <Text style={{ color: colors.textMuted, fontFamily: appFont, fontSize: 12, marginTop: 2 }}>
-                        {TYPE_LABELS[item.type] ?? item.type} · {memberCount} участн. · {item.currency}
+                        {TYPE_LABELS[item.type] ?? item.type} · {members.length || 1} участн. · {item.currency}
                       </Text>
                     </>
                   )}
@@ -158,59 +186,50 @@ export default function PortfoliosScreen() {
               </View>
 
               <View style={{ marginTop: spacing(1.5), padding: spacing(1.25), borderRadius: radius.md, backgroundColor: colors.cardAlt }}>
-                <Text style={{ color: colors.text, fontFamily: appFont, fontSize: 13, fontWeight: '600', marginBottom: spacing(0.75) }}>
-                  Участники портфеля
-                </Text>
-                {members.length ? (
-                  <View style={{ gap: spacing(0.75) }}>
-                    {members.map((member: any) => (
-                      <View key={member.user?.id ?? member.id} style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 6 }}>
-                        <Text style={{ color: colors.text, fontFamily: appFont, fontSize: 13, fontWeight: '600' }}>
-                          {member.user?.name ?? 'Пользователь'}
-                        </Text>
-                        <Text style={{ color: colors.textMuted, fontFamily: appFont, fontSize: 12 }}>
-                          {member.role === 'OWNER' ? 'владелец' : 'участник'} · {member.accessLevel ?? 'FULL'}
-                        </Text>
-                      </View>
-                    ))}
+                <Text style={{ color: colors.text, fontFamily: appFont, fontSize: 13, fontWeight: '600', marginBottom: spacing(0.75) }}>Участники портфеля</Text>
+                {members.length ? members.map((member: any) => (
+                  <View key={member.user?.id ?? member.id} style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 6 }}>
+                    <Text style={{ color: colors.text, fontFamily: appFont, fontSize: 13, fontWeight: '600' }}>{member.user?.name ?? 'Пользователь'}</Text>
+                    <Text style={{ color: colors.textMuted, fontFamily: appFont, fontSize: 12 }}>{member.role === 'OWNER' ? 'владелец' : 'участник'}</Text>
                   </View>
-                ) : (
-                  <Text style={{ color: colors.textMuted, fontFamily: appFont, fontSize: 12 }}>
-                    Сейчас в портфеле только владелец. После приглашения партнёры появятся здесь.
-                  </Text>
-                )}
+                )) : <Text style={{ color: colors.textMuted, fontFamily: appFont, fontSize: 12 }}>После приглашения участники появятся здесь.</Text>}
               </View>
 
               <View style={{ flexDirection: 'row', gap: spacing(1), marginTop: spacing(1.5) }}>
-                <View style={{ flex: 1 }}>
-                  <Button
-                    title={active ? (isSelecting ? 'Выбрано' : 'Текущий') : 'Выбрать'}
-                    variant={active ? 'ghost' : 'primary'}
-                    onPress={() => choosePortfolio(item.id)}
-                    disabled={isSelecting}
-                  />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Button title={isEditing ? 'Сохранить' : 'Переименовать'} variant="ghost" onPress={() => isEditing ? saveName(item.id) : startEdit(item)} loading={busy && isEditing} />
-                </View>
+                <View style={{ flex: 1 }}><Button title={active ? (isSelecting ? 'Выбрано' : 'Текущий') : 'Выбрать'} variant={active ? 'ghost' : 'primary'} onPress={() => choosePortfolio(item.id)} disabled={isSelecting} /></View>
+                <View style={{ flex: 1 }}><Button title={isEditing ? 'Сохранить' : 'Изменить'} variant="ghost" onPress={() => isEditing ? savePortfolio(item.id) : startEdit(item)} loading={busy && isEditing} /></View>
               </View>
-              <View style={{ marginTop: spacing(1) }}>
-                <Button title="Пригласить участника" variant="ghost" onPress={() => invite(item.id)} />
+              <View style={{ flexDirection: 'row', gap: spacing(1), marginTop: spacing(1) }}>
+                <View style={{ flex: 1 }}><Button title="Пригласить" variant="ghost" onPress={() => invite(item.id)} /></View>
+                <View style={{ flex: 1 }}><Button title="Удалить" variant="danger" onPress={() => removePortfolio(item.id, item.name)} disabled={busy} /></View>
               </View>
             </Card>
           );
         }}
-        ListEmptyComponent={<Text style={{ color: colors.textMuted, fontFamily: appFont }}>Портфелей пока нет.</Text>}
+        ListEmptyComponent={
+          <Card>
+            <Text style={{ color: colors.text, fontFamily: appFont, fontSize: 16, fontWeight: '600' }}>Портфелей пока нет</Text>
+            <Text style={{ color: colors.textMuted, fontFamily: appFont, marginTop: 6 }}>Создайте портфель, чтобы пригласить партнёра и объединить данные.</Text>
+          </Card>
+        }
       />
+    </View>
+  );
+}
+
+function ColorDots({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+  return (
+    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: spacing(1), marginBottom: spacing(1) }}>
+      {ICON_COLORS.map((color) => (
+        <Pressable key={color} onPress={() => onChange(color)} style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: color, borderWidth: value === color ? 3 : 1, borderColor: value === color ? colors.text : colors.border }} />
+      ))}
     </View>
   );
 }
 
 function normalizeInviteUrl(url: string, token: string) {
   const webOrigin = (globalThis as any)?.location?.origin;
-  const base = webOrigin && !String(webOrigin).includes('familyfinance-application')
-    ? String(webOrigin)
-    : 'https://familyfinance-appfront.vercel.app';
+  const base = webOrigin && !String(webOrigin).includes('familyfinance-application') ? String(webOrigin) : 'https://familyfinance-appfront.vercel.app';
   const extractedToken = token || url.split('/invite/')[1] || url.split('/').pop();
   return `${base.replace(/\/$/, '')}/invite/${extractedToken}`;
 }
