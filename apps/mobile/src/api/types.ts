@@ -21,8 +21,9 @@ export interface Portfolio {
   name: string;
   type: PortfolioType;
   currency: string;
+  description?: string | null;
   isDefault: boolean;
-  members?: { user: { id: string; name: string } }[];
+  members?: { user: { id: string; name: string }; role?: string; accessLevel?: string; id?: string }[];
 }
 
 export interface Category {
@@ -79,13 +80,7 @@ export interface Credit {
   remainingAmount: string;
   monthlyPayment: string;
   paymentDay: number;
-  schedule?: {
-    nextPaymentDate: string;
-    nextPaymentAmount: number;
-    remainingAmount: number;
-    monthsLeft: number;
-    totalFuturePayments: number;
-  };
+  status: 'ACTIVE' | 'CLOSED' | 'OVERDUE';
 }
 
 export interface Investment {
@@ -95,34 +90,23 @@ export interface Investment {
   quantity: string;
   averageBuyPrice: string;
   currentPrice?: string | null;
-  currency: string;
-  marketValue?: number;
-  profit?: number;
+  expectedDividends?: string | null;
 }
 
 export interface InvestmentForecast {
-  portfolioValue: number;
-  expectedDividendsThisMonth: number;
-  expectedDividendsThisYear: number;
-  receivedDividendsThisYear: number;
+  totalInvested: number;
+  currentValue: number;
+  expectedDividends: number;
+  assets: { id: string; name: string; profit: number; value: number }[];
 }
 
 export interface RecognitionDraft {
-  logId: string;
-  portfolioId: string;
-  parsed: {
-    amount: number | null;
-    currency: string;
-    date: string | null;
-    merchant: string | null;
-    description: string | null;
-    category: string | null;
-    confidence: number;
-    needsClarification: boolean;
-    clarificationQuestion: string | null;
-  };
-  resolvedCategoryId: string | null;
-  resolvedCategoryName: string | null;
-  status: 'CONFIRMED' | 'PENDING' | 'NEEDS_CLARIFICATION' | 'RECOGNITION_ERROR';
-  duplicateOf: string | null;
+  logId?: string;
+  amount?: number | null;
+  merchant?: string | null;
+  date?: string | null;
+  categoryId?: string | null;
+  confidence?: number;
+  needsClarification?: boolean;
+  clarificationQuestion?: string | null;
 }
