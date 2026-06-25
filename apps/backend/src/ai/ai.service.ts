@@ -1,4 +1,5 @@
 import { BadRequestException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Cron, CronExpression } from '@nestjs/schedule';
 import { AiStatus, ExpenseSource, ExpenseStatus, IncomeType, Recurrence } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CategorizationService } from '../categorization/categorization.service';
@@ -43,10 +44,14 @@ export class AiService {
 
   async recognizeImage(params: { buffer: Buffer; mimeType: string; userId: string; portfolioId: string; source?: ExpenseSource }): Promise<RecognitionDraft> {
     let screenshotUrl: string | null = null;
-    if (process.env.SAVE_RECOGNITION_FILES === 'true') {
-      try { screenshotUrl = await this.storage.save(params.buffer, this.extFromMime(params.mimeType)); }
-      catch (error) { this.logger.warn(`Скриншот не сохранён, продолжаю распознавание: ${(error as Error).message}`); }
+    if (this.shouldStoreRecognitionFiles()) {
+      try {
+        screenshotUrl = await this.storage.save(params.buffer, this.extFromMime(params.mimeType));
+      } catch (error) {
+        this.logger.warn(`Скриншот не сохранён, продолжаю распознавание: ${(error as Error).message}`);
+      }
     }
+
     const categories = await this.categoryNames(params.portfolioId);
     const history = await this.merchantHistory(params.userId, params.portfolioId);
     const parsed = await this.parser.parseImage({ imageBase64: params.buffer.toString('base64'), mimeType: params.mimeType, availableCategories: categories, previousMerchantCategories: history });
@@ -57,6 +62,16 @@ export class AiService {
     const categories = await this.categoryNames(params.portfolioId);
     const history = await this.merchantHistory(params.userId, params.portfolioId);
     let operations: ParsedReceipt[] = [];
+    let temporaryFileUrl: string | null = null;
+
+    if (params.fileBase64 && this.shouldStoreRecognitionFiles()) {
+      try {
+        const mimeType = params.mimeType ?? 'image/jpeg';
+        temporaryFileUrl = await this.storage.save(Buffer.from(params.fileBase64, 'base64'), this.extFromMime(mimeType, params.filename));
+      } catch (error) {
+        this.logger.warn(`Файл импорта не сохранён, продолжаю распознавание: ${(error as Error).message}`);
+      }
+    }
 
     if (params.text?.trim()) {
       operations = this.parser.parseOperationsText
@@ -80,7 +95,7 @@ export class AiService {
 
     const result: ImportOperationDraft[] = [];
     for (const operation of operations.filter((item) => item.amount || item.description || item.merchant).slice(0, 30)) {
-      const draft = await this.postProcess(operation, { userId: params.userId, portfolioId: params.portfolioId, source: ExpenseSource.IMPORT, fileUrl: null });
+      const draft = await this.postProcess(operation, { userId: params.userId, portfolioId: params.portfolioId, source: ExpenseSource.IMPORT, fileUrl: temporaryFileUrl });
       const operationType = this.normalizeOperationType(operation.type);
       result.push({ ...draft, operationType, suggestedAction: operationType === 'income' ? 'income' : operationType === 'expense' ? 'expense' : 'skip' });
     }
@@ -89,12 +104,22 @@ export class AiService {
 
   async recognizePdfStatement(params: { buffer: Buffer; filename: string; userId: string; portfolioId: string }): Promise<RecognitionDraft[]> {
     if (!this.parser.parsePdfStatement) throw new Error('Текущий AI-провайдер не поддерживает PDF. Установите AI_PROVIDER=openai.');
+
+    let temporaryFileUrl: string | null = null;
+    if (this.shouldStoreRecognitionFiles()) {
+      try {
+        temporaryFileUrl = await this.storage.save(params.buffer, this.extFromMime('application/pdf', params.filename));
+      } catch (error) {
+        this.logger.warn(`PDF не сохранён, продолжаю распознавание: ${(error as Error).message}`);
+      }
+    }
+
     const categories = await this.categoryNames(params.portfolioId);
     const history = await this.merchantHistory(params.userId, params.portfolioId);
     const parsed = await this.parser.parsePdfStatement({ fileBase64: params.buffer.toString('base64'), filename: params.filename, availableCategories: categories, previousMerchantCategories: history });
     const drafts: RecognitionDraft[] = [];
     for (const operation of parsed.filter((item) => item.type !== 'income' && item.amount).slice(0, 20)) {
-      drafts.push(await this.postProcess(operation, { userId: params.userId, portfolioId: params.portfolioId, source: ExpenseSource.TELEGRAM_BOT, fileUrl: null }));
+      drafts.push(await this.postProcess(operation, { userId: params.userId, portfolioId: params.portfolioId, source: ExpenseSource.TELEGRAM_BOT, fileUrl: temporaryFileUrl }));
     }
     return drafts;
   }
@@ -205,6 +230,31 @@ export class AiService {
     return { success: true };
   }
 
+  @Cron(CronExpression.EVERY_5_MINUTES)
+  async cleanupExpiredRecognitionFiles() {
+    if (!this.shouldStoreRecognitionFiles()) return;
+
+    const ttlMinutes = this.recognitionFileTtlMinutes();
+    const cutoff = new Date(Date.now() - ttlMinutes * 60 * 1000);
+    const logs = await this.prisma.aiRecognitionLog.findMany({
+      where: {
+        originalFileUrl: { not: null },
+        createdAt: { lt: cutoff },
+      },
+      orderBy: { createdAt: 'asc' },
+      take: 50,
+    });
+
+    for (const log of logs) {
+      try {
+        await this.storage.deleteByUrl(log.originalFileUrl);
+      } catch (error) {
+        this.logger.warn(`Не удалось удалить временный файл ${log.originalFileUrl}: ${(error as Error).message}`);
+      }
+      await this.prisma.aiRecognitionLog.update({ where: { id: log.id }, data: { originalFileUrl: null } });
+    }
+  }
+
   private async categoryNames(portfolioId: string) {
     const cats = await this.prisma.category.findMany({ where: { OR: [{ portfolioId }, { portfolioId: null, isSystem: true }], isActive: true }, orderBy: { name: 'asc' } });
     return cats.map((c) => c.name);
@@ -217,8 +267,17 @@ export class AiService {
   }
 
   private async merchantHistory(userId: string, portfolioId: string) {
-    const logs = await this.prisma.aiRecognitionLog.findMany({ where: { userId, portfolioId, parsedMerchant: { not: null }, parsedCategoryId: { not: null } }, include: { parsedCategory: true }, orderBy: { createdAt: 'desc' }, take: 50 });
-    return logs.filter((l) => l.parsedMerchant && l.parsedCategory?.name).map((l) => ({ merchant: l.parsedMerchant!, category: l.parsedCategory!.name }));
+    const logs = await this.prisma.aiRecognitionLog.findMany({
+      where: { userId, portfolioId, parsedMerchant: { not: null }, parsedCategoryId: { not: null } },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+    });
+    const categoryIds = Array.from(new Set(logs.map((log) => log.parsedCategoryId).filter(Boolean) as string[]));
+    const categories = await this.prisma.category.findMany({ where: { id: { in: categoryIds } } });
+    const categoryById = new Map(categories.map((category) => [category.id, category.name]));
+    return logs
+      .filter((log) => log.parsedMerchant && log.parsedCategoryId && categoryById.has(log.parsedCategoryId))
+      .map((log) => ({ merchant: log.parsedMerchant!, category: categoryById.get(log.parsedCategoryId!)! }));
   }
 
   private statusFromConfidence(parsed: ParsedReceipt): ExpenseStatus {
@@ -235,9 +294,20 @@ export class AiService {
     return value === 'income' || value === 'transfer' || value === 'unknown' ? value : 'expense';
   }
 
-  private extFromMime(mime: string) {
-    if (mime.includes('png')) return 'png';
-    if (mime.includes('webp')) return 'webp';
+  private shouldStoreRecognitionFiles() {
+    return process.env.SAVE_RECOGNITION_FILES === 'true' || Boolean(process.env.RECOGNITION_TEMP_FILE_TTL_MINUTES);
+  }
+
+  private recognitionFileTtlMinutes() {
+    const value = Number(process.env.RECOGNITION_TEMP_FILE_TTL_MINUTES ?? 30);
+    return Number.isFinite(value) && value > 0 ? value : 30;
+  }
+
+  private extFromMime(mime: string, filename?: string) {
+    const lowerFilename = filename?.toLowerCase() ?? '';
+    if (mime.includes('pdf') || lowerFilename.endsWith('.pdf')) return 'pdf';
+    if (mime.includes('png') || lowerFilename.endsWith('.png')) return 'png';
+    if (mime.includes('webp') || lowerFilename.endsWith('.webp')) return 'webp';
     return 'jpg';
   }
 }
