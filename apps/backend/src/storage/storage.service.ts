@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { DeleteObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import * as fs from 'fs';
 import * as path from 'path';
 import { nanoid } from 'nanoid';
@@ -23,12 +23,39 @@ export class StorageService {
     return this.saveLocal(buffer, key);
   }
 
+  async deleteByUrl(fileUrl: string | null | undefined): Promise<boolean> {
+    if (!fileUrl) return false;
+    const key = this.keyFromUrl(fileUrl);
+    if (!key) {
+      this.logger.warn(`Не удалось определить ключ файла для удаления: ${fileUrl}`);
+      return false;
+    }
+
+    if (this.driver === 's3') {
+      await this.deleteFromS3(key);
+      return true;
+    }
+
+    await this.deleteLocal(key);
+    return true;
+  }
+
   private async saveLocal(buffer: Buffer, key: string): Promise<string> {
     const full = path.join(this.localDir, key);
     await fs.promises.mkdir(path.dirname(full), { recursive: true });
     await fs.promises.writeFile(full, buffer);
     const base = process.env.PUBLIC_URL ?? 'http://localhost:3000';
     return `${base}/uploads/${key}`;
+  }
+
+  private async deleteLocal(key: string): Promise<void> {
+    const full = path.join(this.localDir, key);
+    try {
+      await fs.promises.unlink(full);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== 'ENOENT') throw error;
+    }
   }
 
   private get s3(): S3Client {
@@ -62,12 +89,45 @@ export class StorageService {
     return `${publicBase}/${key}`;
   }
 
+  private async deleteFromS3(key: string): Promise<void> {
+    const bucket = process.env.S3_BUCKET ?? 'familyfinance';
+    await this.s3.send(
+      new DeleteObjectCommand({
+        Bucket: bucket,
+        Key: key,
+      }),
+    );
+  }
+
+  private keyFromUrl(fileUrl: string): string | null {
+    const uploadsMarker = '/uploads/';
+    const uploadsIndex = fileUrl.indexOf(uploadsMarker);
+    if (uploadsIndex >= 0) return decodeURIComponent(fileUrl.slice(uploadsIndex + uploadsMarker.length));
+
+    const publicBase = process.env.S3_PUBLIC_URL || process.env.S3_ENDPOINT;
+    if (publicBase && fileUrl.startsWith(publicBase)) {
+      const bucket = process.env.S3_BUCKET ?? 'familyfinance';
+      return decodeURIComponent(fileUrl.replace(publicBase, '').replace(new RegExp(`^/${bucket}/?`), '').replace(/^\//, ''));
+    }
+
+    try {
+      const url = new URL(fileUrl);
+      const bucket = process.env.S3_BUCKET ?? 'familyfinance';
+      const pathName = url.pathname.replace(/^\//, '');
+      return decodeURIComponent(pathName.startsWith(`${bucket}/`) ? pathName.slice(bucket.length + 1) : pathName);
+    } catch {
+      return null;
+    }
+  }
+
   private contentType(ext: string): string {
     switch (ext) {
       case 'png':
         return 'image/png';
       case 'webp':
         return 'image/webp';
+      case 'pdf':
+        return 'application/pdf';
       default:
         return 'image/jpeg';
     }
