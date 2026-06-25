@@ -4,7 +4,7 @@ import { usePortfolios } from '../store/portfolio';
 import { colors, radius, spacing } from '../theme';
 
 const TYPE_LABELS: Record<string, string> = {
-  PERSONAL: 'Личный',
+  PERSONAL: 'Профиль',
   FAMILY: 'Семейный',
   SHARED: 'Совместный',
   INVESTMENT: 'Инвестиционный',
@@ -12,16 +12,21 @@ const TYPE_LABELS: Record<string, string> = {
   OTHER: 'Другой',
 };
 
+function isSharedLike(portfolio: any) {
+  return portfolio.type !== 'PERSONAL' || (portfolio.members?.length ?? 0) > 1;
+}
+
 export function PortfolioPicker() {
   const { portfolios, selectedId, select } = usePortfolios();
-  if (portfolios.length <= 1) return null;
+  const visible = portfolios.filter(isSharedLike);
+  if (visible.length === 0) return null;
   return (
     <ScrollView
       horizontal
       showsHorizontalScrollIndicator={false}
       contentContainerStyle={{ gap: spacing(1), paddingVertical: spacing(1) }}
     >
-      {portfolios.map((p) => {
+      {visible.map((p) => {
         const active = p.id === selectedId;
         return (
           <Pressable
@@ -34,7 +39,7 @@ export function PortfolioPicker() {
               borderRadius: radius.lg,
             }}
           >
-            <Text style={{ color: colors.text, fontWeight: '600' }}>{p.name}</Text>
+            <Text style={{ color: active ? '#fff' : colors.text, fontWeight: '600' }}>{p.name}</Text>
             <Text style={{ color: active ? '#E0E7FF' : colors.textMuted, fontSize: 11 }}>
               {TYPE_LABELS[p.type] ?? p.type}
             </Text>
