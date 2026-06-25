@@ -37,55 +37,23 @@ export class AiService {
   async recognizeText(params: { text: string; userId: string; portfolioId: string }): Promise<RecognitionDraft> {
     const categories = await this.categoryNames(params.portfolioId);
     const history = await this.merchantHistory(params.userId, params.portfolioId);
-    const parsed = await this.parser.parseText({
-      text: params.text,
-      availableCategories: categories,
-      previousMerchantCategories: history,
-    });
+    const parsed = await this.parser.parseText({ text: params.text, availableCategories: categories, previousMerchantCategories: history });
     return this.postProcess(parsed, { ...params, source: ExpenseSource.TELEGRAM_BOT, fileUrl: null });
   }
 
-  async recognizeImage(params: {
-    buffer: Buffer;
-    mimeType: string;
-    userId: string;
-    portfolioId: string;
-    source?: ExpenseSource;
-  }): Promise<RecognitionDraft> {
+  async recognizeImage(params: { buffer: Buffer; mimeType: string; userId: string; portfolioId: string; source?: ExpenseSource }): Promise<RecognitionDraft> {
     let screenshotUrl: string | null = null;
-
     if (process.env.SAVE_RECOGNITION_FILES === 'true') {
-      try {
-        screenshotUrl = await this.storage.save(params.buffer, this.extFromMime(params.mimeType));
-      } catch (error) {
-        this.logger.warn(`Скриншот не сохранён, продолжаю распознавание: ${(error as Error).message}`);
-      }
+      try { screenshotUrl = await this.storage.save(params.buffer, this.extFromMime(params.mimeType)); }
+      catch (error) { this.logger.warn(`Скриншот не сохранён, продолжаю распознавание: ${(error as Error).message}`); }
     }
-
     const categories = await this.categoryNames(params.portfolioId);
     const history = await this.merchantHistory(params.userId, params.portfolioId);
-    const parsed = await this.parser.parseImage({
-      imageBase64: params.buffer.toString('base64'),
-      mimeType: params.mimeType,
-      availableCategories: categories,
-      previousMerchantCategories: history,
-    });
-    return this.postProcess(parsed, {
-      userId: params.userId,
-      portfolioId: params.portfolioId,
-      source: params.source ?? ExpenseSource.TELEGRAM_BOT,
-      fileUrl: screenshotUrl,
-    });
+    const parsed = await this.parser.parseImage({ imageBase64: params.buffer.toString('base64'), mimeType: params.mimeType, availableCategories: categories, previousMerchantCategories: history });
+    return this.postProcess(parsed, { userId: params.userId, portfolioId: params.portfolioId, source: params.source ?? ExpenseSource.TELEGRAM_BOT, fileUrl: screenshotUrl });
   }
 
-  async importOperations(params: {
-    userId: string;
-    portfolioId: string;
-    fileBase64?: string;
-    mimeType?: string;
-    filename?: string;
-    text?: string;
-  }): Promise<ImportOperationDraft[]> {
+  async importOperations(params: { userId: string; portfolioId: string; fileBase64?: string; mimeType?: string; filename?: string; text?: string }): Promise<ImportOperationDraft[]> {
     const categories = await this.categoryNames(params.portfolioId);
     const history = await this.merchantHistory(params.userId, params.portfolioId);
     let operations: ParsedReceipt[] = [];
@@ -97,9 +65,7 @@ export class AiService {
     } else if (params.fileBase64) {
       const mimeType = params.mimeType ?? 'image/jpeg';
       if (mimeType.includes('pdf')) {
-        if (!this.parser.parseOperationsPdf && !this.parser.parsePdfStatement) {
-          throw new BadRequestException('Текущий AI-провайдер не поддерживает PDF-импорт.');
-        }
+        if (!this.parser.parseOperationsPdf && !this.parser.parsePdfStatement) throw new BadRequestException('Текущий AI-провайдер не поддерживает PDF-импорт.');
         operations = this.parser.parseOperationsPdf
           ? await this.parser.parseOperationsPdf({ fileBase64: params.fileBase64, filename: params.filename ?? 'document.pdf', availableCategories: categories, previousMerchantCategories: history })
           : await this.parser.parsePdfStatement!({ fileBase64: params.fileBase64, filename: params.filename ?? 'document.pdf', availableCategories: categories, previousMerchantCategories: history });
@@ -114,66 +80,29 @@ export class AiService {
 
     const result: ImportOperationDraft[] = [];
     for (const operation of operations.filter((item) => item.amount || item.description || item.merchant).slice(0, 30)) {
-      const draft = await this.postProcess(operation, {
-        userId: params.userId,
-        portfolioId: params.portfolioId,
-        source: ExpenseSource.IMPORT,
-        fileUrl: null,
-      });
+      const draft = await this.postProcess(operation, { userId: params.userId, portfolioId: params.portfolioId, source: ExpenseSource.IMPORT, fileUrl: null });
       const operationType = this.normalizeOperationType(operation.type);
-      result.push({
-        ...draft,
-        operationType,
-        suggestedAction: operationType === 'income' ? 'income' : operationType === 'expense' ? 'expense' : 'skip',
-      });
+      result.push({ ...draft, operationType, suggestedAction: operationType === 'income' ? 'income' : operationType === 'expense' ? 'expense' : 'skip' });
     }
     return result;
   }
 
-  async recognizePdfStatement(params: {
-    buffer: Buffer;
-    filename: string;
-    userId: string;
-    portfolioId: string;
-  }): Promise<RecognitionDraft[]> {
-    if (!this.parser.parsePdfStatement) {
-      throw new Error('Текущий AI-провайдер не поддерживает PDF. Установите AI_PROVIDER=openai.');
-    }
-
+  async recognizePdfStatement(params: { buffer: Buffer; filename: string; userId: string; portfolioId: string }): Promise<RecognitionDraft[]> {
+    if (!this.parser.parsePdfStatement) throw new Error('Текущий AI-провайдер не поддерживает PDF. Установите AI_PROVIDER=openai.');
     const categories = await this.categoryNames(params.portfolioId);
     const history = await this.merchantHistory(params.userId, params.portfolioId);
-    const parsed = await this.parser.parsePdfStatement({
-      fileBase64: params.buffer.toString('base64'),
-      filename: params.filename,
-      availableCategories: categories,
-      previousMerchantCategories: history,
-    });
-
+    const parsed = await this.parser.parsePdfStatement({ fileBase64: params.buffer.toString('base64'), filename: params.filename, availableCategories: categories, previousMerchantCategories: history });
     const drafts: RecognitionDraft[] = [];
     for (const operation of parsed.filter((item) => item.type !== 'income' && item.amount).slice(0, 20)) {
-      drafts.push(
-        await this.postProcess(operation, {
-          userId: params.userId,
-          portfolioId: params.portfolioId,
-          source: ExpenseSource.TELEGRAM_BOT,
-          fileUrl: null,
-        }),
-      );
+      drafts.push(await this.postProcess(operation, { userId: params.userId, portfolioId: params.portfolioId, source: ExpenseSource.TELEGRAM_BOT, fileUrl: null }));
     }
     return drafts;
   }
 
-  private async postProcess(
-    parsed: ParsedReceipt,
-    ctx: { userId: string; portfolioId: string; source: ExpenseSource; fileUrl: string | null },
-  ): Promise<RecognitionDraft> {
+  private async postProcess(parsed: ParsedReceipt, ctx: { userId: string; portfolioId: string; source: ExpenseSource; fileUrl: string | null }): Promise<RecognitionDraft> {
     let resolvedCategoryId = await this.categoryIdByName(parsed.category, ctx.portfolioId);
     let resolvedCategoryName = parsed.category;
-
-    const ruleMatch = await this.categorization.match(
-      `${parsed.merchant ?? ''} ${parsed.description ?? parsed.extractedText ?? ''}`,
-      { userId: ctx.userId, portfolioId: ctx.portfolioId },
-    );
+    const ruleMatch = await this.categorization.match(`${parsed.merchant ?? ''} ${parsed.description ?? parsed.extractedText ?? ''}`, { userId: ctx.userId, portfolioId: ctx.portfolioId });
     if (!resolvedCategoryId && ruleMatch.categoryId) {
       resolvedCategoryId = ruleMatch.categoryId;
       resolvedCategoryName = ruleMatch.categoryName;
@@ -183,22 +112,12 @@ export class AiService {
       resolvedCategoryId = await this.categorization.fallbackCategoryId();
       resolvedCategoryName = 'Другое';
     }
-
-    if (parsed.amount && resolvedCategoryId && parsed.confidence >= 45) {
-      parsed.needsClarification = false;
-    }
-
+    if (parsed.amount && resolvedCategoryId && parsed.confidence >= 45) parsed.needsClarification = false;
     const status = this.statusFromConfidence(parsed);
 
     let duplicateOf: string | null = null;
     if (parsed.amount && parsed.type === 'expense') {
-      const dup = await this.expenses.findPotentialDuplicate({
-        portfolioId: ctx.portfolioId,
-        paidByUserId: ctx.userId,
-        amount: parsed.amount,
-        merchant: parsed.merchant,
-        date: parsed.date ? new Date(parsed.date) : new Date(),
-      });
+      const dup = await this.expenses.findPotentialDuplicate({ portfolioId: ctx.portfolioId, paidByUserId: ctx.userId, amount: parsed.amount, merchant: parsed.merchant, date: parsed.date ? new Date(parsed.date) : new Date() });
       duplicateOf = dup?.id ?? null;
     }
 
@@ -218,37 +137,16 @@ export class AiService {
       },
     });
 
-    return {
-      logId: log.id,
-      portfolioId: ctx.portfolioId,
-      parsed,
-      resolvedCategoryId,
-      resolvedCategoryName,
-      status,
-      screenshotUrl: ctx.fileUrl,
-      duplicateOf,
-    };
+    return { logId: log.id, portfolioId: ctx.portfolioId, parsed, resolvedCategoryId, resolvedCategoryName, status, screenshotUrl: ctx.fileUrl, duplicateOf };
   }
 
-  async confirmRecognition(params: {
-    logId: string;
-    userId: string;
-    categoryId?: string;
-    portfolioId?: string;
-    force?: boolean;
-  }) {
+  async confirmRecognition(params: { logId: string; userId: string; categoryId?: string; portfolioId?: string; force?: boolean }) {
     const log = await this.prisma.aiRecognitionLog.findUnique({ where: { id: params.logId } });
     if (!log) throw new NotFoundException('Запись распознавания не найдена');
-    if (log.createdExpenseId) {
-      return { alreadyCreated: true, expenseId: log.createdExpenseId };
-    }
-
+    if (log.createdExpenseId) return { alreadyCreated: true, expenseId: log.createdExpenseId };
     const portfolioId = params.portfolioId ?? log.portfolioId!;
     const categoryId = params.categoryId ?? log.parsedCategoryId ?? undefined;
-
-    if (!log.parsedAmount || Number(log.parsedAmount) <= 0) {
-      throw new Error('Не удалось определить сумму расхода');
-    }
+    if (!log.parsedAmount || Number(log.parsedAmount) <= 0) throw new Error('Не удалось определить сумму расхода');
 
     const expense = await this.expenses.createFromRecognition({
       portfolioId,
@@ -265,51 +163,23 @@ export class AiService {
       screenshotUrl: log.originalFileUrl,
     });
 
-    await this.prisma.aiRecognitionLog.update({
-      where: { id: log.id },
-      data: { status: AiStatus.CONFIRMED, createdExpenseId: expense.id, parsedCategoryId: categoryId },
-    });
-
-    if (log.parsedMerchant && categoryId) {
-      await this.categorization.learn({
-        keyword: log.parsedMerchant,
-        categoryId,
-        userId: params.userId,
-        portfolioId,
-      });
-    }
-
+    await this.prisma.aiRecognitionLog.update({ where: { id: log.id }, data: { status: AiStatus.CONFIRMED, createdExpenseId: expense.id, parsedCategoryId: categoryId } });
+    if (log.parsedMerchant && categoryId) await this.categorization.learn({ keyword: log.parsedMerchant, categoryId, userId: params.userId, portfolioId });
     return { expenseId: expense.id, expense };
   }
 
-  async confirmImportedOperations(params: {
-    userId: string;
-    operations: { logId: string; action: 'expense' | 'income' | 'skip'; categoryId?: string; comment?: string }[];
-  }) {
+  async confirmImportedOperations(params: { userId: string; operations: { logId: string; action: 'expense' | 'income' | 'skip'; categoryId?: string; comment?: string }[] }) {
     const results: { logId: string; action: string; id?: string; skipped?: boolean }[] = [];
-
     for (const operation of params.operations) {
-      if (operation.action === 'skip') {
-        results.push({ logId: operation.logId, action: 'skip', skipped: true });
-        continue;
-      }
-
+      if (operation.action === 'skip') { results.push({ logId: operation.logId, action: 'skip', skipped: true }); continue; }
       if (operation.action === 'expense') {
-        const confirmed = await this.confirmRecognition({
-          logId: operation.logId,
-          userId: params.userId,
-          categoryId: operation.categoryId,
-          force: true,
-        });
+        const confirmed = await this.confirmRecognition({ logId: operation.logId, userId: params.userId, categoryId: operation.categoryId, force: true });
         results.push({ logId: operation.logId, action: 'expense', id: confirmed.expenseId });
         continue;
       }
-
       const log = await this.prisma.aiRecognitionLog.findUnique({ where: { id: operation.logId } });
       if (!log) throw new NotFoundException('Запись распознавания не найдена');
-      if (!log.parsedAmount || Number(log.parsedAmount) <= 0) {
-        throw new BadRequestException('Не удалось определить сумму дохода');
-      }
+      if (!log.parsedAmount || Number(log.parsedAmount) <= 0) throw new BadRequestException('Не удалось определить сумму дохода');
       const portfolioId = log.portfolioId!;
       await this.prisma.portfolioMember.findFirstOrThrow({ where: { portfolioId, userId: params.userId, status: 'ACTIVE' } });
       const income = await this.prisma.income.create({
@@ -324,92 +194,50 @@ export class AiService {
           description: operation.comment ?? log.parsedMerchant ?? log.extractedText ?? 'Импортированный доход',
         },
       });
-      await this.prisma.aiRecognitionLog.update({
-        where: { id: log.id },
-        data: { status: AiStatus.CONFIRMED },
-      });
+      await this.prisma.aiRecognitionLog.update({ where: { id: log.id }, data: { status: AiStatus.CONFIRMED } });
       results.push({ logId: operation.logId, action: 'income', id: income.id });
     }
-
     return { success: true, results };
   }
 
-  async updateCategoryRule(params: {
-    userId: string;
-    portfolioId?: string;
-    merchant: string;
-    categoryId: string;
-  }) {
-    await this.categorization.learn({
-      keyword: params.merchant,
-      categoryId: params.categoryId,
-      userId: params.userId,
-      portfolioId: params.portfolioId,
-    });
+  async updateCategoryRule(params: { userId: string; portfolioId?: string; merchant: string; categoryId: string }) {
+    await this.categorization.learn({ keyword: params.merchant, categoryId: params.categoryId, userId: params.userId, portfolioId: params.portfolioId });
     return { success: true };
   }
 
-  private statusFromConfidence(parsed: ParsedReceipt): ExpenseStatus {
-    if (parsed.amount == null) return ExpenseStatus.NEEDS_CLARIFICATION;
-    if (parsed.needsClarification || parsed.confidence < 45 || parsed.type === 'unknown') return ExpenseStatus.NEEDS_CLARIFICATION;
-    return ExpenseStatus.PENDING;
-  }
-
-  private aiStatus(status: ExpenseStatus): AiStatus {
-    switch (status) {
-      case ExpenseStatus.CONFIRMED:
-        return AiStatus.CONFIRMED;
-      case ExpenseStatus.NEEDS_CLARIFICATION:
-        return AiStatus.NEEDS_CLARIFICATION;
-      case ExpenseStatus.RECOGNITION_ERROR:
-        return AiStatus.ERROR;
-      default:
-        return AiStatus.PENDING;
-    }
-  }
-
-  private normalizeOperationType(type: ParsedReceipt['type']): ParsedOperationType {
-    return type === 'income' || type === 'transfer' || type === 'unknown' ? type : 'expense';
-  }
-
   private async categoryNames(portfolioId: string) {
-    const categories = await this.prisma.category.findMany({
-      where: { OR: [{ portfolioId }, { portfolioId: null }], isActive: true },
-      select: { name: true },
-      orderBy: [{ isSystem: 'asc' }, { name: 'asc' }],
-    });
-    return categories.map((c) => c.name);
+    const cats = await this.prisma.category.findMany({ where: { OR: [{ portfolioId }, { portfolioId: null, isSystem: true }], isActive: true }, orderBy: { name: 'asc' } });
+    return cats.map((c) => c.name);
   }
 
   private async categoryIdByName(name: string | null, portfolioId: string) {
     if (!name) return null;
-    const category = await this.prisma.category.findFirst({
-      where: {
-        name: { equals: name, mode: 'insensitive' },
-        OR: [{ portfolioId }, { portfolioId: null }],
-        isActive: true,
-      },
-      select: { id: true },
-    });
-    return category?.id ?? null;
+    const cat = await this.prisma.category.findFirst({ where: { name: { equals: name, mode: 'insensitive' }, OR: [{ portfolioId }, { portfolioId: null, isSystem: true }], isActive: true } });
+    return cat?.id ?? null;
   }
 
   private async merchantHistory(userId: string, portfolioId: string) {
-    const expenses = await this.prisma.expense.findMany({
-      where: { portfolioId, userId, merchant: { not: null }, categoryId: { not: null } },
-      include: { category: { select: { name: true } } },
-      orderBy: { createdAt: 'desc' },
-      take: 25,
-    });
-    return expenses
-      .filter((expense) => expense.merchant && expense.category?.name)
-      .map((expense) => ({ merchant: expense.merchant!, category: expense.category!.name }));
+    const logs = await this.prisma.aiRecognitionLog.findMany({ where: { userId, portfolioId, parsedMerchant: { not: null }, parsedCategoryId: { not: null } }, include: { parsedCategory: true }, orderBy: { createdAt: 'desc' }, take: 50 });
+    return logs.filter((l) => l.parsedMerchant && l.parsedCategory?.name).map((l) => ({ merchant: l.parsedMerchant!, category: l.parsedCategory!.name }));
+  }
+
+  private statusFromConfidence(parsed: ParsedReceipt): ExpenseStatus {
+    if (!parsed.amount) return ExpenseStatus.NEEDS_CLARIFICATION;
+    if (parsed.confidence < 45 || parsed.needsClarification) return ExpenseStatus.NEEDS_CLARIFICATION;
+    return ExpenseStatus.CONFIRMED;
+  }
+
+  private aiStatus(status: ExpenseStatus): AiStatus {
+    return status === ExpenseStatus.CONFIRMED ? AiStatus.CONFIRMED : AiStatus.NEEDS_CLARIFICATION;
+  }
+
+  private normalizeOperationType(value: ParsedOperationType | undefined): ParsedOperationType {
+    return value === 'income' || value === 'transfer' || value === 'unknown' ? value : 'expense';
   }
 
   private extFromMime(mime: string) {
     if (mime.includes('png')) return 'png';
     if (mime.includes('webp')) return 'webp';
-    if (mime.includes('pdf')) return 'pdf';
     return 'jpg';
   }
 }
