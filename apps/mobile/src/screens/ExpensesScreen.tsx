@@ -6,7 +6,7 @@ import { request } from '../api/client';
 import { Expense } from '../api/types';
 import { useAuth } from '../store/auth';
 import { usePortfolios } from '../store/portfolio';
-import { Button, Card, IconBubble, ScreenTitle, SegmentedControl, appFont } from '../components/ui';
+import { Card, IconBubble, ScreenTitle, SegmentedControl, appFont } from '../components/ui';
 import { PortfolioPicker } from '../components/PortfolioPicker';
 import { colors, radius, spacing } from '../theme';
 import { countOccurrences, scheduledAmount } from '../utils/schedule';
@@ -99,7 +99,12 @@ export default function ExpensesScreen({ navigation }: any) {
 
   const load = useCallback(async () => {
     if (!selectedId) return;
-    try { setItems(await api.expenses(selectedId)); } catch { setItems([]); }
+    try {
+      const response = await api.expenses(selectedId);
+      setItems(Array.isArray(response) ? response : []);
+    } catch {
+      setItems([]);
+    }
   }, [selectedId]);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
@@ -134,14 +139,17 @@ export default function ExpensesScreen({ navigation }: any) {
       await request(`/expenses/${item.id}`, { method: 'DELETE' });
       setItems((current) => current.filter((expense) => expense.id !== item.id));
       setPendingDeleteId(null);
-    } catch (e: any) { setDeleteError(e.message ?? 'Не удалось удалить расход.'); }
-    finally { setDeletingId(null); }
+    } catch (e: any) {
+      setDeleteError(e.message ?? 'Не удалось удалить расход.');
+    } finally {
+      setDeletingId(null);
+    }
   }, []);
 
   const viewLabel = { SHARED: 'общие операции', MINE: 'мои операции', PARTNERS: selectedPartnerId ? `партнёр: ${partners.find((p) => p.id === selectedPartnerId)?.name ?? 'выбранный'}` : 'операции партнёров' }[viewMode];
 
   if (!selectedId) {
-    return <View style={{ flex: 1, backgroundColor: colors.bg, padding: spacing(2.5) }}><ScreenTitle>Расходы</ScreenTitle><Card><Text style={{ color: colors.text }}>Сначала создайте портфель во вкладке «Портфели».</Text></Card></View>;
+    return <View style={{ flex: 1, backgroundColor: colors.bg, padding: spacing(2.5) }}><ScreenTitle>Расходы</ScreenTitle><Card><Text style={{ color: colors.text }}>Личный профиль загружается. Обновите экран через пару секунд.</Text></Card></View>;
   }
 
   return (
@@ -156,21 +164,23 @@ export default function ExpensesScreen({ navigation }: any) {
       <View style={{ gap: spacing(1), marginBottom: spacing(1.5) }}>
         <SegmentedControl value={viewMode} onChange={setViewMode} options={[{ label: 'Общие', value: 'SHARED' }, { label: 'Мои', value: 'MINE' }, { label: 'Партнёры', value: 'PARTNERS' }]} />
         <SegmentedControl value={periodMode} onChange={setPeriodMode} options={[{ label: 'Месяц', value: 'MONTH' }, { label: 'Год', value: 'YEAR' }]} />
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing(1) }}>
-          {months.map((m) => <PeriodChip key={m.key} label={m.label} active={selectedMonth === m.key} onPress={() => setSelectedMonth(m.key)} />)}
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing(1), paddingBottom: spacing(0.5) }}>
+          {months.map((m) => <Chip key={m.key} label={m.label} active={selectedMonth === m.key} onPress={() => setSelectedMonth(m.key)} />)}
         </ScrollView>
       </View>
 
       {viewMode === 'PARTNERS' && partners.length > 0 ? <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: spacing(1), marginBottom: spacing(1.5) }}>
-        <PeriodChip label="Все партнёры" active={selectedPartnerId === null} onPress={() => setSelectedPartnerId(null)} />
-        {partners.map((partner) => <PeriodChip key={partner.id} label={partner.name} active={selectedPartnerId === partner.id} onPress={() => setSelectedPartnerId(partner.id)} />)}
+        <Chip label="Все партнёры" active={selectedPartnerId === null} onPress={() => setSelectedPartnerId(null)} />
+        {partners.map((partner) => <Chip key={partner.id} label={partner.name} active={selectedPartnerId === partner.id} onPress={() => setSelectedPartnerId(partner.id)} />)}
       </View> : null}
 
-      <PortfolioPicker />
+      <View style={{ minHeight: 52, marginBottom: spacing(1.5), zIndex: 2 }}><PortfolioPicker /></View>
+
       <Card style={{ marginBottom: spacing(1.5) }}>
         <Text style={{ color: colors.textMuted, fontFamily: appFont, fontSize: 13 }}>Расходы · {viewLabel} · {periodMode === 'MONTH' ? 'месяц' : 'год'}</Text>
         <Text style={{ color: colors.expense, fontFamily: appFont, fontSize: 30, fontWeight: '600', marginTop: 6 }}>−{new Intl.NumberFormat('ru-RU').format(Math.round(total))} ₽</Text>
       </Card>
+
       {deleteError ? <Card style={{ marginBottom: spacing(1.25), borderColor: colors.expense }}><Text style={{ color: colors.expense }}>{deleteError}</Text></Card> : null}
 
       <FlatList data={filteredItems} keyExtractor={(i) => i.id} contentContainerStyle={{ paddingBottom: spacing(12) }} ListEmptyComponent={<Text style={{ color: colors.textMuted, marginTop: spacing(2), fontFamily: appFont }}>Расходов в выбранном периоде пока нет.</Text>} renderItem={({ item }) => {
@@ -199,6 +209,6 @@ export default function ExpensesScreen({ navigation }: any) {
   );
 }
 
-function PeriodChip({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
+function Chip({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
   return <Pressable onPress={onPress} style={{ paddingHorizontal: spacing(1.25), paddingVertical: spacing(0.75), borderRadius: radius.pill, backgroundColor: active ? colors.primarySoft : colors.card, borderWidth: 1, borderColor: active ? colors.primary : colors.border }}><Text style={{ color: active ? colors.primary : colors.text, fontFamily: appFont, fontWeight: '600', fontSize: 12 }}>{label}</Text></Pressable>;
 }
