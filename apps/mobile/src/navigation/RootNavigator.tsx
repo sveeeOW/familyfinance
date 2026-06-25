@@ -20,6 +20,7 @@ import AnalyticsScreen from '../screens/AnalyticsScreen';
 import SettingsScreen from '../screens/SettingsScreen';
 import ClarificationScreen from '../screens/ClarificationScreen';
 import CreditsScreen from '../screens/CreditsScreen';
+import CreditCardsScreen from '../screens/CreditCardsScreen';
 import InvestmentsScreen from '../screens/InvestmentsScreen';
 import ScanReceiptScreen from '../screens/ScanReceiptScreen';
 import CategoriesScreen from '../screens/CategoriesScreen';
@@ -31,14 +32,7 @@ const Tab = createBottomTabNavigator();
 
 const navTheme = {
   ...DefaultTheme,
-  colors: {
-    ...DefaultTheme.colors,
-    background: colors.bg,
-    card: colors.card,
-    text: colors.text,
-    border: colors.border,
-    primary: colors.primary,
-  },
+  colors: { ...DefaultTheme.colors, background: colors.bg, card: colors.card, text: colors.text, border: colors.border, primary: colors.primary },
 };
 
 const linking = {
@@ -49,73 +43,29 @@ const linking = {
       Login: 'login',
       Register: 'register',
       PasswordRecovery: 'password-recovery',
-      Tabs: {
-        screens: {
-          Главная: '',
-          Расходы: 'expenses',
-          Доходы: 'incomes',
-          Портфели: 'portfolios',
-          Аналитика: 'analytics',
-        },
-      },
+      Tabs: { screens: { Главная: '', Расходы: 'expenses', Доходы: 'incomes', Портфели: 'portfolios', Кредитки: 'credit-cards', Аналитика: 'analytics' } },
     },
   },
 };
 
-const TAB_ICON: Record<string, React.ComponentProps<typeof Icon>['name']> = {
-  Главная: 'home',
-  Расходы: 'expense',
-  Доходы: 'income',
-  Портфели: 'wallet',
-  Аналитика: 'analytics',
-};
+const TAB_ICON: Record<string, React.ComponentProps<typeof Icon>['name']> = { Главная: 'home', Расходы: 'expense', Доходы: 'income', Портфели: 'wallet', Кредитки: 'card', Аналитика: 'analytics' };
 
 function MainTabs() {
   return (
-    <Tab.Navigator
-      screenOptions={({ route }) => ({
-        headerShown: false,
-        tabBarStyle: {
-          position: 'absolute',
-          left: spacing(2),
-          right: spacing(2),
-          bottom: spacing(1.5),
-          height: 84,
-          backgroundColor: colors.card,
-          borderTopWidth: 0,
-          borderRadius: radius.xl,
-          paddingTop: spacing(0.85),
-          paddingBottom: spacing(1),
-          paddingHorizontal: spacing(0.7),
-          ...shadows.card,
-        },
-        tabBarItemStyle: {
-          borderRadius: radius.lg,
-          marginHorizontal: 2,
-        },
-        tabBarLabelStyle: { fontWeight: '500', fontSize: 10, marginTop: 1 },
-        tabBarActiveTintColor: colors.text,
-        tabBarInactiveTintColor: colors.textSubtle,
-        tabBarIcon: ({ color, focused }) => (
-          <View
-            style={{
-              width: 52,
-              height: 42,
-              borderRadius: radius.pill,
-              alignItems: 'center',
-              justifyContent: 'center',
-              backgroundColor: focused ? colors.yellowSoft : 'transparent',
-            }}
-          >
-            <Icon name={TAB_ICON[route.name] ?? 'home'} size={focused ? 30 : 27} color={color} strokeWidth={focused ? 2.35 : 2.05} />
-          </View>
-        ),
-      })}
-    >
+    <Tab.Navigator screenOptions={({ route }) => ({
+      headerShown: false,
+      tabBarStyle: { position: 'absolute', left: spacing(2), right: spacing(2), bottom: spacing(1.5), height: 84, backgroundColor: colors.card, borderTopWidth: 0, borderRadius: radius.xl, paddingTop: spacing(0.85), paddingBottom: spacing(1), paddingHorizontal: spacing(0.4), ...shadows.card },
+      tabBarItemStyle: { borderRadius: radius.lg, marginHorizontal: 1 },
+      tabBarLabelStyle: { fontWeight: '500', fontSize: 9, marginTop: 1 },
+      tabBarActiveTintColor: colors.text,
+      tabBarInactiveTintColor: colors.textSubtle,
+      tabBarIcon: ({ color, focused }) => <View style={{ width: 46, height: 40, borderRadius: radius.pill, alignItems: 'center', justifyContent: 'center', backgroundColor: focused ? colors.yellowSoft : 'transparent' }}><Icon name={TAB_ICON[route.name] ?? 'home'} size={focused ? 28 : 25} color={color} strokeWidth={focused ? 2.35 : 2.05} /></View>,
+    })}>
       <Tab.Screen name="Главная" component={DashboardScreen} />
       <Tab.Screen name="Расходы" component={ExpensesScreen} />
       <Tab.Screen name="Доходы" component={IncomesScreen} />
       <Tab.Screen name="Портфели" component={PortfoliosScreen} />
+      <Tab.Screen name="Кредитки" component={CreditCardsScreen} />
       <Tab.Screen name="Аналитика" component={AnalyticsScreen} />
     </Tab.Navigator>
   );
@@ -123,67 +73,28 @@ function MainTabs() {
 
 export default function RootNavigator() {
   const status = useAuth((s) => s.status);
-
   return (
     <NavigationContainer theme={navTheme} linking={linking as any}>
-      <Stack.Navigator
-        screenOptions={{
-          headerStyle: { backgroundColor: colors.bg },
-          headerShadowVisible: false,
-          headerTintColor: colors.text,
-          headerTitleStyle: { fontWeight: '600', letterSpacing: -0.3 },
-          contentStyle: { backgroundColor: colors.bg },
-        }}
-      >
-        {status === 'authenticated' ? (
-          <>
-            <Stack.Screen
-              name="Tabs"
-              component={MainTabs}
-              options={({ navigation }) => ({
-                headerShown: true,
-                title: 'Family Finance',
-                headerRight: () => (
-                  <Pressable
-                    onPress={() => navigation.navigate('Settings')}
-                    hitSlop={12}
-                    style={{
-                      width: 44,
-                      height: 44,
-                      borderRadius: radius.pill,
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      backgroundColor: colors.card,
-                      borderWidth: 1,
-                      borderColor: colors.border,
-                      ...shadows.card,
-                    }}
-                  >
-                    <Icon name="settings" size={24} color={colors.text} strokeWidth={2.05} />
-                  </Pressable>
-                ),
-              })}
-            />
-            <Stack.Screen name="Invite" component={InviteScreen} options={{ title: 'Приглашение' }} />
-            <Stack.Screen name="PasswordRecovery" component={PasswordRecoveryScreen} options={{ title: 'Восстановление доступа' }} />
-            <Stack.Screen name="AddExpense" component={AddExpenseScreen} options={{ title: 'Новый расход' }} />
-            <Stack.Screen name="AddIncome" component={AddIncomeScreen} options={{ title: 'Доход' }} />
-            <Stack.Screen name="ScanReceipt" component={ScanReceiptScreen} options={{ title: 'Импорт операций' }} />
-            <Stack.Screen name="Clarification" component={ClarificationScreen} options={{ title: 'Требует уточнения' }} />
-            <Stack.Screen name="Credits" component={CreditsScreen} options={{ title: 'Кредиты' }} />
-            <Stack.Screen name="Investments" component={InvestmentsScreen} options={{ title: 'Инвестиции' }} />
-            <Stack.Screen name="Categories" component={CategoriesScreen} options={{ title: 'Категории' }} />
-            <Stack.Screen name="Participants" component={ParticipantsScreen} options={{ title: 'Участники' }} />
-            <Stack.Screen name="Settings" component={SettingsScreen} options={{ title: 'Настройки' }} />
-          </>
-        ) : (
-          <>
-            <Stack.Screen name="Invite" component={InviteScreen} options={{ title: 'Приглашение' }} />
-            <Stack.Screen name="Login" component={LoginScreen} options={{ headerShown: false }} />
-            <Stack.Screen name="Register" component={RegisterScreen} options={{ title: 'Регистрация' }} />
-            <Stack.Screen name="PasswordRecovery" component={PasswordRecoveryScreen} options={{ title: 'Восстановление доступа' }} />
-          </>
-        )}
+      <Stack.Navigator screenOptions={{ headerStyle: { backgroundColor: colors.bg }, headerShadowVisible: false, headerTintColor: colors.text, headerTitleStyle: { fontWeight: '600', letterSpacing: -0.3 }, contentStyle: { backgroundColor: colors.bg } }}>
+        {status === 'authenticated' ? <>
+          <Stack.Screen name="Tabs" component={MainTabs} options={({ navigation }) => ({ headerShown: true, title: 'Family Finance', headerRight: () => <Pressable onPress={() => navigation.navigate('Settings')} hitSlop={12} style={{ width: 44, height: 44, borderRadius: radius.pill, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, ...shadows.card }}><Icon name="settings" size={24} color={colors.text} strokeWidth={2.05} /></Pressable> })} />
+          <Stack.Screen name="Invite" component={InviteScreen} options={{ title: 'Приглашение' }} />
+          <Stack.Screen name="PasswordRecovery" component={PasswordRecoveryScreen} options={{ title: 'Восстановление доступа' }} />
+          <Stack.Screen name="AddExpense" component={AddExpenseScreen} options={{ title: 'Новый расход' }} />
+          <Stack.Screen name="AddIncome" component={AddIncomeScreen} options={{ title: 'Доход' }} />
+          <Stack.Screen name="ScanReceipt" component={ScanReceiptScreen} options={{ title: 'Импорт операций' }} />
+          <Stack.Screen name="Clarification" component={ClarificationScreen} options={{ title: 'Требует уточнения' }} />
+          <Stack.Screen name="Credits" component={CreditsScreen} options={{ title: 'Кредиты' }} />
+          <Stack.Screen name="Investments" component={InvestmentsScreen} options={{ title: 'Инвестиции' }} />
+          <Stack.Screen name="Categories" component={CategoriesScreen} options={{ title: 'Категории' }} />
+          <Stack.Screen name="Participants" component={ParticipantsScreen} options={{ title: 'Участники' }} />
+          <Stack.Screen name="Settings" component={SettingsScreen} options={{ title: 'Настройки' }} />
+        </> : <>
+          <Stack.Screen name="Invite" component={InviteScreen} options={{ title: 'Приглашение' }} />
+          <Stack.Screen name="Login" component={LoginScreen} options={{ headerShown: false }} />
+          <Stack.Screen name="Register" component={RegisterScreen} options={{ title: 'Регистрация' }} />
+          <Stack.Screen name="PasswordRecovery" component={PasswordRecoveryScreen} options={{ title: 'Восстановление доступа' }} />
+        </>}
       </Stack.Navigator>
     </NavigationContainer>
   );
