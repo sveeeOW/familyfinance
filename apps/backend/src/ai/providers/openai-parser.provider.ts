@@ -18,13 +18,14 @@ export class OpenAiReceiptParser implements ReceiptParser {
 
   async parseImage(input: ParseImageInput): Promise<ParsedReceipt> {
     const system = buildSystemPrompt(input.availableCategories, input.previousMerchantCategories);
+    const imageMimeType = this.sanitizeImageMimeType(input.mimeType);
     const text = await this.createResponse([
       { role: 'system', content: [{ type: 'input_text', text: system }] },
       {
         role: 'user',
         content: [
           { type: 'input_text', text: 'Распознай финансовую операцию на изображении. Верни строго JSON по системному формату.' },
-          { type: 'input_image', image_url: `data:${input.mimeType};base64,${input.imageBase64}` },
+          { type: 'input_image', image_url: `data:${imageMimeType};base64,${this.cleanBase64(input.imageBase64)}` },
         ],
       },
     ]);
@@ -32,6 +33,7 @@ export class OpenAiReceiptParser implements ReceiptParser {
   }
 
   async parseOperationsImage(input: ParseImageInput): Promise<ParsedReceipt[]> {
+    const imageMimeType = this.sanitizeImageMimeType(input.mimeType);
     const text = await this.createResponse([
       {
         role: 'system',
@@ -41,7 +43,7 @@ export class OpenAiReceiptParser implements ReceiptParser {
         role: 'user',
         content: [
           { type: 'input_text', text: 'Найди все финансовые операции на изображении. Верни массив operations. Не придумывай суммы, если они не видны.' },
-          { type: 'input_image', image_url: `data:${input.mimeType};base64,${input.imageBase64}` },
+          { type: 'input_image', image_url: `data:${imageMimeType};base64,${this.cleanBase64(input.imageBase64)}` },
         ],
       },
     ]);
@@ -77,6 +79,7 @@ export class OpenAiReceiptParser implements ReceiptParser {
   }
 
   async parsePdfStatement(input: ParsePdfInput): Promise<ParsedReceipt[]> {
+    const filename = this.sanitizeFilename(input.filename, 'bank-statement.pdf');
     const text = await this.createResponse([
       {
         role: 'system',
@@ -85,8 +88,8 @@ export class OpenAiReceiptParser implements ReceiptParser {
       {
         role: 'user',
         content: [
-          { type: 'input_file', filename: input.filename || 'bank-statement.pdf', file_data: `data:application/pdf;base64,${input.fileBase64}` },
-          { type: 'input_text', text: `Это PDF-документ ${input.filename}: квитанция, справка по операции или банковская выписка. Найди все финансовые операции.` },
+          { type: 'input_file', filename, file_data: `data:application/pdf;base64,${this.cleanBase64(input.fileBase64)}` },
+          { type: 'input_text', text: 'Это PDF-документ: квитанция, справка по операции или банковская выписка. Найди все финансовые операции.' },
         ],
       },
     ]);
@@ -144,10 +147,11 @@ export class OpenAiReceiptParser implements ReceiptParser {
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) throw new Error('OPENAI_API_KEY не задан');
 
+    const body = JSON.stringify({ model: this.model, input, max_output_tokens: this.maxOutputTokens });
     const response = await fetch(this.apiUrl, {
       method: 'POST',
       headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: this.model, input, max_output_tokens: this.maxOutputTokens }),
+      body,
     });
 
     const data = await response.json().catch(() => null);
@@ -226,6 +230,34 @@ export class OpenAiReceiptParser implements ReceiptParser {
       clarificationQuestion: 'Не удалось распознать операцию. Попробуйте другой файл или опишите операцию текстом.',
       extractedText: text,
     };
+  }
+
+  private sanitizeImageMimeType(value: unknown): string {
+    const mime = String(value ?? '').toLowerCase().trim();
+    if (mime === 'image/png') return 'image/png';
+    if (mime === 'image/webp') return 'image/webp';
+    if (mime === 'image/gif') return 'image/gif';
+    if (mime === 'image/jpg' || mime === 'image/jpeg') return 'image/jpeg';
+    return 'image/jpeg';
+  }
+
+  private sanitizeFilename(value: unknown, fallback: string): string {
+    const raw = String(value ?? fallback).trim();
+    const ext = raw.toLowerCase().endsWith('.pdf') ? '.pdf' : '';
+    const base = raw
+      .replace(/\.[^.]+$/, '')
+      .normalize('NFKD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-zA-Z0-9_-]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 80);
+    return `${base || 'document'}${ext || '.pdf'}`;
+  }
+
+  private cleanBase64(value: string): string {
+    return String(value ?? '')
+      .replace(/^data:[^;]+;base64,/i, '')
+      .replace(/\s/g, '');
   }
 
   private clamp(value: unknown) {
