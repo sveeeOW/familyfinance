@@ -144,8 +144,7 @@ export class OpenAiReceiptParser implements ReceiptParser {
   }
 
   private async createResponse(input: unknown[]) {
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) throw new Error('OPENAI_API_KEY не задан');
+    const apiKey = this.getOpenAiApiKey();
 
     const body = JSON.stringify({ model: this.model, input, max_output_tokens: this.maxOutputTokens });
     const response = await fetch(this.apiUrl, {
@@ -230,6 +229,14 @@ export class OpenAiReceiptParser implements ReceiptParser {
       clarificationQuestion: 'Не удалось распознать операцию. Попробуйте другой файл или опишите операцию текстом.',
       extractedText: text,
     };
+  }
+
+  private getOpenAiApiKey(): string {
+    const apiKey = String(process.env.OPENAI_API_KEY ?? '').trim();
+    if (!apiKey) throw new Error('OPENAI_API_KEY не задан');
+    if (!/^[\x20-\x7E]+$/.test(apiKey)) throw new Error('OPENAI_API_KEY содержит недопустимые символы. Проверь переменную окружения в Vercel: ключ должен начинаться с sk- или sk-proj-.');
+    if (!apiKey.startsWith('sk-')) throw new Error('OPENAI_API_KEY выглядит некорректно. Проверь переменную окружения в Vercel: ключ должен начинаться с sk- или sk-proj-.');
+    return apiKey;
   }
 
   private sanitizeImageMimeType(value: unknown): string {
