@@ -3,6 +3,7 @@ import { AiService } from './ai.service';
 import { AiController } from './ai.controller';
 import { RECEIPT_PARSER } from './receipt-parser.interface';
 import { ClaudeReceiptParser } from './providers/claude-parser.provider';
+import { GeminiReceiptParser } from './providers/gemini-parser.provider';
 import { MockReceiptParser } from './providers/mock-parser.provider';
 import { OpenAiReceiptParser } from './providers/openai-parser.provider';
 import { CategorizationModule } from '../categorization/categorization.module';
@@ -14,6 +15,7 @@ import { ExpensesModule } from '../expenses/expenses.module';
   providers: [
     AiService,
     ClaudeReceiptParser,
+    GeminiReceiptParser,
     MockReceiptParser,
     OpenAiReceiptParser,
     {
@@ -21,15 +23,24 @@ import { ExpensesModule } from '../expenses/expenses.module';
       // Если реальный провайдер выбран явно, но ключ не задан, backend должен упасть с понятной ошибкой,
       // а не возвращать mock-результат как будто распознавание работает.
       provide: RECEIPT_PARSER,
-      useFactory: (openai: OpenAiReceiptParser, claude: ClaudeReceiptParser, mock: MockReceiptParser) => {
+      useFactory: (openai: OpenAiReceiptParser, claude: ClaudeReceiptParser, gemini: GeminiReceiptParser, mock: MockReceiptParser) => {
         const logger = new Logger('AiModule');
         const provider = (process.env.AI_PROVIDER ?? '').toLowerCase();
         const hasOpenAiApiKey = Boolean(process.env.OPENAI_API_KEY);
         const hasAnthropicApiKey = Boolean(process.env.ANTHROPIC_API_KEY);
+        const hasGeminiApiKey = Boolean(process.env.GEMINI_API_KEY);
 
         if (provider === 'mock') {
           logger.warn('AI_PROVIDER=mock — включён mock-парсер. Реальное распознавание изображений отключено.');
           return mock;
+        }
+
+        if (provider === 'gemini' || provider === 'google') {
+          if (!hasGeminiApiKey) {
+            throw new Error('AI_PROVIDER=gemini, но GEMINI_API_KEY не задан в окружении backend. Добавьте GEMINI_API_KEY в Production Environment Variables проекта familyfinance-application и redeploy без build cache.');
+          }
+          logger.log(`AI provider selected: gemini, model=${process.env.GEMINI_MODEL ?? 'gemini-2.0-flash-lite'}`);
+          return gemini;
         }
 
         if (provider === 'openai') {
@@ -48,6 +59,11 @@ import { ExpensesModule } from '../expenses/expenses.module';
           return claude;
         }
 
+        if (hasGeminiApiKey) {
+          logger.log(`AI_PROVIDER не задан, выбран Gemini по наличию GEMINI_API_KEY. model=${process.env.GEMINI_MODEL ?? 'gemini-2.0-flash-lite'}`);
+          return gemini;
+        }
+
         if (hasOpenAiApiKey) {
           logger.log(`AI_PROVIDER не задан, выбран OpenAI по наличию OPENAI_API_KEY. model=${process.env.AI_MODEL ?? 'default'}`);
           return openai;
@@ -58,10 +74,10 @@ import { ExpensesModule } from '../expenses/expenses.module';
           return claude;
         }
 
-        logger.warn('AI ключи не найдены — включён mock-парсер. Добавьте OPENAI_API_KEY или ANTHROPIC_API_KEY в backend окружение.');
+        logger.warn('AI ключи не найдены — включён mock-парсер. Добавьте GEMINI_API_KEY, OPENAI_API_KEY или ANTHROPIC_API_KEY в backend окружение.');
         return mock;
       },
-      inject: [OpenAiReceiptParser, ClaudeReceiptParser, MockReceiptParser],
+      inject: [OpenAiReceiptParser, ClaudeReceiptParser, GeminiReceiptParser, MockReceiptParser],
     },
   ],
   exports: [AiService],
