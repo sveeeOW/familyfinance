@@ -20,8 +20,7 @@ import { ExpensesModule } from '../expenses/expenses.module';
     OpenAiReceiptParser,
     {
       // Выбор провайдера распознавания по AI_PROVIDER.
-      // Если реальный провайдер выбран явно, но ключ не задан, backend должен упасть с понятной ошибкой,
-      // а не возвращать mock-результат как будто распознавание работает.
+      // Ошибка в AI-настройках не должна убивать весь backend и ломать login.
       provide: RECEIPT_PARSER,
       useFactory: (openai: OpenAiReceiptParser, claude: ClaudeReceiptParser, gemini: GeminiReceiptParser, mock: MockReceiptParser) => {
         const logger = new Logger('AiModule');
@@ -30,52 +29,47 @@ import { ExpensesModule } from '../expenses/expenses.module';
         const hasAnthropicApiKey = Boolean(process.env.ANTHROPIC_API_KEY);
         const hasGeminiApiKey = Boolean(process.env.GEMINI_API_KEY);
 
+        const fallback = (reason: string) => {
+          if (hasGeminiApiKey) {
+            logger.warn(`${reason} Выбран Gemini по наличию GEMINI_API_KEY. model=${process.env.GEMINI_MODEL ?? 'gemini-2.0-flash-lite'}`);
+            return gemini;
+          }
+          if (hasOpenAiApiKey) {
+            logger.warn(`${reason} Выбран OpenAI по наличию OPENAI_API_KEY. model=${process.env.AI_MODEL ?? 'default'}`);
+            return openai;
+          }
+          if (hasAnthropicApiKey) {
+            logger.warn(`${reason} Выбран Claude по наличию ANTHROPIC_API_KEY. model=${process.env.AI_MODEL ?? 'default'}`);
+            return claude;
+          }
+          logger.warn(`${reason} AI ключи не найдены — включён mock-парсер. Авторизация и приложение продолжат работать.`);
+          return mock;
+        };
+
         if (provider === 'mock') {
           logger.warn('AI_PROVIDER=mock — включён mock-парсер. Реальное распознавание изображений отключено.');
           return mock;
         }
 
         if (provider === 'gemini' || provider === 'google') {
-          if (!hasGeminiApiKey) {
-            throw new Error('AI_PROVIDER=gemini, но GEMINI_API_KEY не задан в окружении backend. Добавьте GEMINI_API_KEY в Production Environment Variables проекта familyfinance-application и redeploy без build cache.');
-          }
+          if (!hasGeminiApiKey) return fallback('AI_PROVIDER=gemini, но GEMINI_API_KEY не задан.');
           logger.log(`AI provider selected: gemini, model=${process.env.GEMINI_MODEL ?? 'gemini-2.0-flash-lite'}`);
           return gemini;
         }
 
         if (provider === 'openai') {
-          if (!hasOpenAiApiKey) {
-            throw new Error('AI_PROVIDER=openai, но OPENAI_API_KEY не задан в окружении backend. Добавьте OPENAI_API_KEY в Production Environment Variables проекта familyfinance-application и redeploy без build cache.');
-          }
+          if (!hasOpenAiApiKey) return fallback('AI_PROVIDER=openai, но OPENAI_API_KEY не задан.');
           logger.log(`AI provider selected: openai, model=${process.env.AI_MODEL ?? 'default'}`);
           return openai;
         }
 
         if (provider === 'claude' || provider === 'anthropic') {
-          if (!hasAnthropicApiKey) {
-            throw new Error('AI_PROVIDER=claude/anthropic, но ANTHROPIC_API_KEY не задан в окружении backend.');
-          }
+          if (!hasAnthropicApiKey) return fallback('AI_PROVIDER=claude/anthropic, но ANTHROPIC_API_KEY не задан.');
           logger.log(`AI provider selected: claude, model=${process.env.AI_MODEL ?? 'default'}`);
           return claude;
         }
 
-        if (hasGeminiApiKey) {
-          logger.log(`AI_PROVIDER не задан, выбран Gemini по наличию GEMINI_API_KEY. model=${process.env.GEMINI_MODEL ?? 'gemini-2.0-flash-lite'}`);
-          return gemini;
-        }
-
-        if (hasOpenAiApiKey) {
-          logger.log(`AI_PROVIDER не задан, выбран OpenAI по наличию OPENAI_API_KEY. model=${process.env.AI_MODEL ?? 'default'}`);
-          return openai;
-        }
-
-        if (hasAnthropicApiKey) {
-          logger.log(`AI_PROVIDER не задан, выбран Claude по наличию ANTHROPIC_API_KEY. model=${process.env.AI_MODEL ?? 'default'}`);
-          return claude;
-        }
-
-        logger.warn('AI ключи не найдены — включён mock-парсер. Добавьте GEMINI_API_KEY, OPENAI_API_KEY или ANTHROPIC_API_KEY в backend окружение.');
-        return mock;
+        return fallback('AI_PROVIDER не задан или неизвестен.');
       },
       inject: [OpenAiReceiptParser, ClaudeReceiptParser, GeminiReceiptParser, MockReceiptParser],
     },
