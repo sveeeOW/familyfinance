@@ -36,7 +36,7 @@ export default function AnalyticsScreen() {
   }));
 
   return (
-    <ScrollView style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ padding: spacing(2.5) }}>
+    <ScrollView style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ padding: spacing(2.5), paddingBottom: spacing(20) }}>
       <ScreenTitle>Аналитика</ScreenTitle>
       <PortfolioPicker />
 
