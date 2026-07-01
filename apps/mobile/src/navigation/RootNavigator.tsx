@@ -91,8 +91,8 @@ export default function RootNavigator() {
           <Stack.Screen name="Participants" component={ParticipantsScreen} options={{ title: 'Участники' }} />
           <Stack.Screen name="Settings" component={SettingsScreen} options={{ title: 'Настройки' }} />
         </> : <>
-          <Stack.Screen name="Invite" component={InviteScreen} options={{ title: 'Приглашение' }} />
           <Stack.Screen name="Login" component={LoginScreen} options={{ headerShown: false }} />
+          <Stack.Screen name="Invite" component={InviteScreen} options={{ title: 'Приглашение' }} />
           <Stack.Screen name="Register" component={RegisterScreen} options={{ title: 'Регистрация' }} />
           <Stack.Screen name="PasswordRecovery" component={PasswordRecoveryScreen} options={{ title: 'Восстановление доступа' }} />
         </>}
