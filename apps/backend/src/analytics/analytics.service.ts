@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { ExpenseScope, ExpenseStatus, Recurrence } from '@prisma/client';
+import { CreditStatus, ExpenseScope, ExpenseStatus, Recurrence } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { PortfolioAccessService } from '../common/access/portfolio-access.service';
 
@@ -14,6 +14,22 @@ export class AnalyticsService {
     const start = new Date(date.getFullYear(), date.getMonth(), 1);
     const end = new Date(date.getFullYear(), date.getMonth() + 1, 1);
     return { start, end };
+  }
+
+  private startOfDay(date: Date) {
+    return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  }
+
+  private daysInMonth(year: number, month: number) {
+    return new Date(year, month + 1, 0).getDate();
+  }
+
+  private dateInMonth(year: number, month: number, day: number) {
+    return new Date(year, month, Math.min(Math.max(1, day), this.daysInMonth(year, month)));
+  }
+
+  private addMonthsClamped(date: Date, months: number) {
+    return this.dateInMonth(date.getFullYear(), date.getMonth() + months, date.getDate());
   }
 
   private parseCustomPeriod(text?: string | null): { interval: number; unit: 'DAY' | 'WEEK' | 'MONTH' } | null {
@@ -38,17 +54,29 @@ export class AnalyticsService {
     }
     if (recurrence === Recurrence.CUSTOM) {
       const custom = this.parseCustomPeriod(text);
-      if (!custom) {
-        next.setMonth(next.getMonth() + 1);
-        return next;
-      }
+      if (!custom) return this.addMonthsClamped(next, 1);
       if (custom.unit === 'DAY') next.setDate(next.getDate() + custom.interval);
       if (custom.unit === 'WEEK') next.setDate(next.getDate() + custom.interval * 7);
-      if (custom.unit === 'MONTH') next.setMonth(next.getMonth() + custom.interval);
+      if (custom.unit === 'MONTH') return this.addMonthsClamped(next, custom.interval);
       return next;
     }
-    next.setMonth(next.getMonth() + 1);
-    return next;
+    return this.addMonthsClamped(next, 1);
+  }
+
+  private countMonthlyByDay(params: { firstDate: Date; paymentDay: number; rangeStart: Date; rangeEnd: Date }) {
+    const firstDate = this.startOfDay(params.firstDate);
+    let cursor = new Date(params.rangeStart.getFullYear(), params.rangeStart.getMonth(), 1);
+    let count = 0;
+    let guard = 0;
+
+    while (cursor < params.rangeEnd && guard < 240) {
+      const occurrence = this.dateInMonth(cursor.getFullYear(), cursor.getMonth(), params.paymentDay);
+      if (occurrence >= params.rangeStart && occurrence < params.rangeEnd && occurrence >= firstDate) count += 1;
+      cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1);
+      guard += 1;
+    }
+
+    return count;
   }
 
   private countOccurrences(params: {
@@ -57,13 +85,22 @@ export class AnalyticsService {
     rangeStart: Date;
     rangeEnd: Date;
     text?: string | null;
+    paymentDay?: number | null;
   }) {
-    const { recurrence, rangeStart, rangeEnd, text } = params;
-    let current = new Date(params.startDate);
+    const { recurrence, rangeStart, rangeEnd, text, paymentDay } = params;
+    const startDate = this.startOfDay(params.startDate);
+
     if (recurrence === Recurrence.ONE_TIME) {
-      return current >= rangeStart && current < rangeEnd ? 1 : 0;
+      return startDate >= rangeStart && startDate < rangeEnd ? 1 : 0;
     }
 
+    // Для ежемесячных событий дата — это не конкретный месяц, а якорь расписания.
+    // Считаем по числу месяца: ипотека каждый 22 день, аренда каждый 1 день и т.п.
+    if (recurrence === Recurrence.MONTHLY && paymentDay) {
+      return this.countMonthlyByDay({ firstDate: startDate, paymentDay, rangeStart, rangeEnd });
+    }
+
+    let current = new Date(startDate);
     let guard = 0;
     while (current < rangeStart && guard < 600) {
       current = this.addPeriod(current, recurrence, text);
@@ -87,6 +124,7 @@ export class AnalyticsService {
         rangeStart: start,
         rangeEnd: end,
         text: income.description,
+        paymentDay: income.paymentDay ?? income.date?.getDate?.(),
       });
       return sum + Number(income.amount) * count;
     }, 0);
@@ -100,6 +138,7 @@ export class AnalyticsService {
         rangeStart: start,
         rangeEnd: end,
         text: item.comment,
+        paymentDay: item.paymentDay,
       });
       return sum + Number(item.amount) * count;
     }, 0);
@@ -116,10 +155,10 @@ export class AnalyticsService {
         include: { category: { select: { id: true, name: true, color: true, icon: true } } },
       }),
       this.prisma.recurringPayment.findMany({
-        where: { portfolioId },
+        where: { portfolioId, status: CreditStatus.ACTIVE },
         include: { category: { select: { id: true, name: true, color: true, icon: true } } },
       }),
-      this.prisma.credit.findMany({ where: { portfolioId } }),
+      this.prisma.credit.findMany({ where: { portfolioId, status: CreditStatus.ACTIVE } }),
     ]);
 
     const scheduledIncome = this.incomeForRange(incomes, start, end);
@@ -145,7 +184,14 @@ export class AnalyticsService {
       });
     }
     for (const r of recurring) {
-      const count = this.countOccurrences({ startDate: r.nextPaymentDate, recurrence: r.recurrence, rangeStart: start, rangeEnd: end, text: r.comment });
+      const count = this.countOccurrences({
+        startDate: r.nextPaymentDate,
+        recurrence: r.recurrence,
+        rangeStart: start,
+        rangeEnd: end,
+        text: r.comment,
+        paymentDay: r.paymentDay,
+      });
       if (!count) continue;
       const key = r.category?.id ?? `recurring-${r.id}`;
       const name = r.category?.name ?? r.title;
@@ -209,8 +255,8 @@ export class AnalyticsService {
     const [incomes, expenses, recurring, credits] = await Promise.all([
       this.prisma.income.findMany({ where: { portfolioId } }),
       this.prisma.expense.findMany({ where: { portfolioId, status: ExpenseStatus.CONFIRMED, date: { gte: from } } }),
-      this.prisma.recurringPayment.findMany({ where: { portfolioId } }),
-      this.prisma.credit.findMany({ where: { portfolioId } }),
+      this.prisma.recurringPayment.findMany({ where: { portfolioId, status: CreditStatus.ACTIVE } }),
+      this.prisma.credit.findMany({ where: { portfolioId, status: CreditStatus.ACTIVE } }),
     ]);
 
     const buckets: Record<string, { month: string; income: number; expense: number }> = {};
@@ -248,8 +294,8 @@ export class AnalyticsService {
 
     const [incomes, recurring, credits, currentMonthExpenses, variableExpenses] = await Promise.all([
       this.prisma.income.findMany({ where: { portfolioId } }),
-      this.prisma.recurringPayment.findMany({ where: { portfolioId } }),
-      this.prisma.credit.findMany({ where: { portfolioId } }),
+      this.prisma.recurringPayment.findMany({ where: { portfolioId, status: CreditStatus.ACTIVE } }),
+      this.prisma.credit.findMany({ where: { portfolioId, status: CreditStatus.ACTIVE } }),
       this.prisma.expense.findMany({ where: { portfolioId, status: ExpenseStatus.CONFIRMED, date: { gte: start, lt: end } } }),
       this.prisma.expense.findMany({
         where: {
@@ -320,7 +366,7 @@ export class AnalyticsService {
 
   async creditsAnalytics(portfolioId: string, userId: string) {
     await this.access.requireMember(portfolioId, userId);
-    const credits = await this.prisma.credit.findMany({ where: { portfolioId } });
+    const credits = await this.prisma.credit.findMany({ where: { portfolioId, status: CreditStatus.ACTIVE } });
     const totalRemaining = credits.reduce((s, c) => s + Number(c.remainingAmount), 0);
     const monthlyLoad = credits.reduce((s, c) => s + Number(c.monthlyPayment), 0);
     return {
