@@ -1,13 +1,13 @@
-import { Injectable, Logger, OnModuleInit, OnApplicationShutdown } from '@nestjs/common';
-import { Telegraf, Markup } from 'telegraf';
+import { Injectable, Logger, OnApplicationShutdown, OnModuleInit } from '@nestjs/common';
 import { ExpenseStatus } from '@prisma/client';
-import { PrismaService } from '../prisma/prisma.service';
+import { Markup, Telegraf } from 'telegraf';
 import { AiService, RecognitionDraft } from '../ai/ai.service';
+import { CreditCardsService } from '../credit-cards/credit-cards.service';
+import { PrismaService } from '../prisma/prisma.service';
 import { TelegramLinkService } from './telegram-link.service';
 
 interface SessionState {
   draft?: RecognitionDraft;
-  awaitingClarification?: boolean;
 }
 
 @Injectable()
@@ -20,6 +20,7 @@ export class TelegramService implements OnModuleInit, OnApplicationShutdown {
     private readonly prisma: PrismaService,
     private readonly ai: AiService,
     private readonly links: TelegramLinkService,
+    private readonly creditCards: CreditCardsService,
   ) {}
 
   async onModuleInit() {
@@ -29,9 +30,7 @@ export class TelegramService implements OnModuleInit, OnApplicationShutdown {
       return;
     }
     this.bot = new Telegraf(token);
-    this.bot.catch((error) => {
-      this.logger.error(`Telegram handler error: ${(error as Error).message}`, (error as Error).stack);
-    });
+    this.bot.catch((error) => this.logger.error(`Telegram handler error: ${(error as Error).message}`, (error as Error).stack));
     this.registerHandlers();
 
     const domain = process.env.TELEGRAM_WEBHOOK_DOMAIN;
@@ -54,10 +53,7 @@ export class TelegramService implements OnModuleInit, OnApplicationShutdown {
   }
 
   async sendMessage(telegramId: string, text: string) {
-    if (!this.bot) {
-      this.logger.warn(`Бот выключен, уведомление не отправлено: ${text}`);
-      return;
-    }
+    if (!this.bot) return;
     try {
       await this.bot.telegram.sendMessage(telegramId, text);
     } catch (e) {
@@ -73,25 +69,18 @@ export class TelegramService implements OnModuleInit, OnApplicationShutdown {
       const tgId = String(ctx.from.id);
       if (payload) {
         const res = await this.links.linkByCode(payload, tgId);
-        if (res.ok) {
-          await ctx.reply('✅ Аккаунт привязан! Теперь присылайте мне скриншоты чеков, PDF-выписки или пишите о тратах текстом.');
-        } else {
-          await ctx.reply(`❌ ${res.reason}. Сгенерируйте новый код в приложении (Настройки → Telegram-бот).`);
-        }
+        await ctx.reply(res.ok
+          ? '✅ Аккаунт привязан! Теперь присылайте скриншоты чеков, PDF-выписки или пишите о тратах текстом.'
+          : `❌ ${res.reason}. Сгенерируйте новый код в приложении.`);
         return;
       }
       const user = await this.userByTelegram(tgId);
-      if (user) {
-        await ctx.reply('Привет! Пришлите скриншот чека, PDF-выписку или напишите трату текстом, например: «22628 кредит авто».');
-      } else {
-        await ctx.reply('Чтобы начать, привяжите аккаунт: откройте приложение → Настройки → «Подключить Telegram-бота» и перейдите по ссылке.');
-      }
+      await ctx.reply(user
+        ? 'Привет! Пришлите скриншот чека, PDF-выписку или напишите трату текстом, например: «22628 кредит авто».'
+        : 'Чтобы начать, привяжите аккаунт: откройте приложение → Настройки → «Подключить Telegram-бота».');
     });
 
-    bot.help((ctx) =>
-      ctx.reply('Я добавляю расходы в Family Finance.\n• Пришлите скриншот чека или список операций — распознаю одну или несколько операций.\n• Пришлите PDF-выписку — найду расходы.\n• Или напишите: «1200 такси».\n• Подтвердите кнопкой — операция появится в приложении.'),
-    );
-
+    bot.help((ctx) => ctx.reply('Я добавляю операции в Family Finance. Пришлите скрин/фото/PDF или текст. После распознавания можно выбрать: расход в портфель, доход, кредитка или пропуск.'));
     bot.on('photo', async (ctx) => this.onPhoto(ctx));
     bot.on('document', async (ctx) => this.onDocument(ctx));
     bot.on('text', async (ctx) => this.onText(ctx));
@@ -100,159 +89,87 @@ export class TelegramService implements OnModuleInit, OnApplicationShutdown {
     bot.action(/^force:(.+)$/, async (ctx) => this.onConfirm(ctx, ctx.match[1], true));
     bot.action(/^income:(.+)$/, async (ctx) => this.onConfirmIncome(ctx, ctx.match[1]));
     bot.action(/^skip:(.+)$/, async (ctx) => this.onSkip(ctx, ctx.match[1]));
-    bot.action(/^cancel:(.+)$/, async (ctx) => {
-      this.sessions.delete(String(ctx.from!.id));
-      await this.safeAnswer(ctx, 'Отменено');
-      await this.safeEditOrReply(ctx, '❌ Операция не добавлена.');
-    });
+    bot.action(/^cancel:(.+)$/, async (ctx) => this.onCancel(ctx));
 
-    // Новые короткие callback-data для Telegram limit 64 bytes.
     bot.action(/^pc:(.+)$/, async (ctx) => this.onPickCategory(ctx, this.decodeId(ctx.match[1])));
     bot.action(/^pp:(.+)$/, async (ctx) => this.onPickPortfolio(ctx, this.decodeId(ctx.match[1])));
+    bot.action(/^cc:(.+)$/, async (ctx) => this.onPickCreditCard(ctx, this.decodeId(ctx.match[1])));
     bot.action(/^sc:([^:]+):(.+)$/, async (ctx) => this.onSetCategory(ctx, this.decodeId(ctx.match[1]), this.decodeId(ctx.match[2])));
     bot.action(/^sp:([^:]+):(.+)$/, async (ctx) => this.onSetPortfolio(ctx, this.decodeId(ctx.match[1]), this.decodeId(ctx.match[2])));
-
-    // Старые callback-data оставляем для сообщений, которые уже были отправлены раньше.
-    bot.action(/^pickcat:(.+)$/, async (ctx) => this.onPickCategory(ctx, ctx.match[1]));
-    bot.action(/^setcat:([^:]+):(.+)$/, async (ctx) => this.onSetCategory(ctx, ctx.match[1], ctx.match[2]));
-    bot.action(/^pickport:(.+)$/, async (ctx) => this.onPickPortfolio(ctx, ctx.match[1]));
-    bot.action(/^setport:([^:]+):(.+)$/, async (ctx) => this.onSetPortfolio(ctx, ctx.match[1], ctx.match[2]));
+    bot.action(/^setcc:([^:]+):(.+)$/, async (ctx) => this.onSetCreditCard(ctx, this.decodeId(ctx.match[1]), this.decodeId(ctx.match[2])));
   }
 
   private async onText(ctx: any) {
-    const tgId = String(ctx.from.id);
-    const user = await this.userByTelegram(tgId);
-    if (!user) {
-      await ctx.reply('Сначала привяжите аккаунт через приложение (Настройки → Telegram-бот).');
-      return;
-    }
+    const user = await this.userByTelegram(String(ctx.from.id));
+    if (!user) return ctx.reply('Сначала привяжите аккаунт через приложение.');
     const text: string = ctx.message.text;
     if (text.startsWith('/')) return;
-
     const portfolioId = await this.defaultPortfolioId(user.id);
-    if (!portfolioId) {
-      await ctx.reply('У вас нет доступных портфелей. Создайте портфель в приложении.');
-      return;
-    }
-
+    if (!portfolioId) return ctx.reply('У вас нет доступных портфелей. Создайте портфель в приложении.');
     await ctx.reply('🔎 Анализирую…');
     const draft = await this.ai.recognizeText({ text, userId: user.id, portfolioId });
-    await this.presentDraft(ctx, user.id, draft);
+    await this.presentDraft(ctx, draft);
   }
 
   private async onPhoto(ctx: any) {
-    const tgId = String(ctx.from.id);
-    const user = await this.userByTelegram(tgId);
-    if (!user) {
-      await ctx.reply('Сначала привяжите аккаунт через приложение (Настройки → Telegram-бот).');
-      return;
-    }
+    const user = await this.userByTelegram(String(ctx.from.id));
+    if (!user) return ctx.reply('Сначала привяжите аккаунт через приложение.');
     const portfolioId = await this.defaultPortfolioId(user.id);
-    if (!portfolioId) {
-      await ctx.reply('У вас нет доступных портфелей. Создайте портфель в приложении.');
-      return;
-    }
-
+    if (!portfolioId) return ctx.reply('У вас нет доступных портфелей. Создайте портфель в приложении.');
     await ctx.reply('🔎 Распознаю скриншот. Если там несколько операций — попробую найти все…');
     try {
       const photos = ctx.message.photo;
       const fileId = photos[photos.length - 1].file_id;
       const buffer = await this.downloadTelegramFile(ctx, fileId);
-      const drafts = await this.ai.importOperations({
-        fileBase64: buffer.toString('base64'),
-        mimeType: 'image/jpeg',
-        filename: 'telegram-photo.jpg',
-        userId: user.id,
-        portfolioId,
-      });
-
-      if (!drafts.length) {
-        await ctx.reply('Не нашёл явных операций на изображении. Попробуйте прислать более чёткий скрин или напишите трату текстом.');
-        return;
-      }
-
-      if (drafts.length > 1) {
-        await ctx.reply(`Нашёл операций: ${drafts.length}. Отправляю на подтверждение по одной.`);
-      }
-
-      for (const draft of drafts) {
-        await this.presentDraft(ctx, user.id, draft);
-      }
+      const drafts = await this.ai.importOperations({ fileBase64: buffer.toString('base64'), mimeType: 'image/jpeg', filename: 'telegram-photo.jpg', userId: user.id, portfolioId });
+      if (!drafts.length) return ctx.reply('Не нашёл явных операций на изображении. Попробуйте более чёткий скрин.');
+      if (drafts.length > 1) await ctx.reply(`Нашёл операций: ${drafts.length}. Отправляю на подтверждение по одной.`);
+      for (const draft of drafts) await this.presentDraft(ctx, draft);
     } catch (e) {
       this.logger.error(`Ошибка распознавания фото: ${(e as Error).message}`, (e as Error).stack);
-      await ctx.reply('Не удалось распознать изображение. Напишите трату текстом, например: «22628 кредит авто».');
+      await ctx.reply('Не удалось распознать изображение. Напишите трату текстом.');
     }
   }
 
   private async onDocument(ctx: any) {
-    const tgId = String(ctx.from.id);
-    const user = await this.userByTelegram(tgId);
-    if (!user) {
-      await ctx.reply('Сначала привяжите аккаунт через приложение (Настройки → Telegram-бот).');
-      return;
-    }
-
+    const user = await this.userByTelegram(String(ctx.from.id));
+    if (!user) return ctx.reply('Сначала привяжите аккаунт через приложение.');
     const doc = ctx.message.document;
     const filename = doc.file_name ?? 'statement.pdf';
     const mimeType = doc.mime_type ?? '';
     const isPdf = mimeType.includes('pdf') || filename.toLowerCase().endsWith('.pdf');
-    if (!isPdf) {
-      await ctx.reply('Пока я умею читать только PDF-выписки. Пришлите PDF-файл или фото чека.');
-      return;
-    }
-
+    if (!isPdf) return ctx.reply('Пока я умею читать только PDF-выписки. Пришлите PDF-файл или фото чека.');
     const portfolioId = await this.defaultPortfolioId(user.id);
-    if (!portfolioId) {
-      await ctx.reply('У вас нет доступных портфелей. Создайте портфель в приложении.');
-      return;
-    }
-
+    if (!portfolioId) return ctx.reply('У вас нет доступных портфелей. Создайте портфель в приложении.');
     await ctx.reply('📄 Читаю PDF-выписку. Это может занять до минуты…');
     try {
       const buffer = await this.downloadTelegramFile(ctx, doc.file_id);
-      const drafts = await this.ai.recognizePdfStatement({
-        buffer,
-        filename,
-        userId: user.id,
-        portfolioId,
-      });
-
-      if (!drafts.length) {
-        await ctx.reply('Не нашёл явных расходов в PDF. Возможно, выписка защищена, отсканирована картинкой или в ней нет операций списания.');
-        return;
-      }
-
+      const drafts = await this.ai.recognizePdfStatement({ buffer, filename, userId: user.id, portfolioId });
+      if (!drafts.length) return ctx.reply('Не нашёл явных расходов в PDF.');
       await ctx.reply(`Нашёл операций: ${drafts.length}. Отправляю их на подтверждение по одной.`);
-      for (const draft of drafts) {
-        await this.presentDraft(ctx, user.id, draft);
-      }
+      for (const draft of drafts) await this.presentDraft(ctx, draft);
     } catch (e) {
       this.logger.error(`Ошибка разбора PDF: ${(e as Error).message}`, (e as Error).stack);
       await ctx.reply(`Не удалось прочитать PDF: ${(e as Error).message}`);
     }
   }
 
-  private async presentDraft(ctx: any, userId: string, draft: RecognitionDraft) {
-    const tgId = String(ctx.from.id);
-    this.sessions.set(tgId, { draft });
-
+  private async presentDraft(ctx: any, draft: RecognitionDraft) {
+    this.sessions.set(String(ctx.from.id), { draft });
     const p = draft.parsed;
     if (draft.status === ExpenseStatus.NEEDS_CLARIFICATION && !p.amount) {
-      await ctx.reply(p.clarificationQuestion ?? 'Не смог распознать сумму. Опишите трату: например «1500 продукты».');
+      await ctx.reply(p.clarificationQuestion ?? 'Не смог распознать сумму. Опишите трату текстом.');
       return;
     }
-
     await this.safeReply(ctx, await this.draftText(draft), this.draftKeyboard(draft));
   }
 
   private async draftText(draft: RecognitionDraft) {
     const p = draft.parsed;
-    const portfolio = await this.prisma.portfolio.findUnique({ where: { id: draft.portfolioId } });
-    const amountStr = p.amount ? `${this.fmt(p.amount)} ${p.currency}` : '—';
-    const title = p.type === 'income' ? 'Нашёл доход:\n' : p.type === 'transfer' ? 'Нашёл перевод/операцию:\n' : draft.duplicateOf ? '⚠️ Похожий расход уже есть. Всё равно добавить?\n' : 'Нашёл расход:\n';
+    const portfolio = draft.portfolioId ? await this.prisma.portfolio.findUnique({ where: { id: draft.portfolioId } }) : null;
     const lines = [
-      title,
-      `Сумма: ${amountStr}`,
+      p.type === 'income' ? 'Нашёл доход:\n' : p.type === 'transfer' ? 'Нашёл перевод/операцию:\n' : draft.duplicateOf ? '⚠️ Похожий расход уже есть. Всё равно добавить?\n' : 'Нашёл расход:\n',
+      `Сумма: ${p.amount ? `${this.fmt(p.amount)} ${p.currency}` : '—'}`,
       `Тип: ${this.typeLabel(p.type)}`,
       `Категория: ${draft.resolvedCategoryName ?? p.category ?? 'Другое'}`,
       `Описание: ${p.merchant ?? p.description ?? '—'}`,
@@ -260,9 +177,7 @@ export class TelegramService implements OnModuleInit, OnApplicationShutdown {
       `Дата: ${p.date ?? new Date().toISOString().slice(0, 10)}`,
       `Уверенность: ${p.confidence}%`,
     ];
-    if (draft.status === ExpenseStatus.NEEDS_CLARIFICATION) {
-      lines.push('\n❓ Не уверен в данных — проверьте перед добавлением.');
-    }
+    if (draft.status === ExpenseStatus.NEEDS_CLARIFICATION) lines.push('\n❓ Не уверен в данных — проверьте перед добавлением.');
     return lines.join('\n');
   }
 
@@ -271,20 +186,20 @@ export class TelegramService implements OnModuleInit, OnApplicationShutdown {
     const logId = draft.logId;
     const shortLogId = this.encodeId(logId);
     const rows: any[] = [];
-
     if (p.type === 'income') {
       rows.push([Markup.button.callback('💰 Добавить как доход', `income:${logId}`)]);
-      rows.push([Markup.button.callback('✅ Добавить как расход', draft.duplicateOf ? `force:${logId}` : `confirm:${logId}`)]);
+      rows.push([Markup.button.callback('✅ Платёж в портфель', draft.duplicateOf ? `force:${logId}` : `confirm:${logId}`)]);
     } else if (p.type === 'transfer' || p.type === 'unknown') {
       rows.push([
-        Markup.button.callback('✅ Как расход', draft.duplicateOf ? `force:${logId}` : `confirm:${logId}`),
-        Markup.button.callback('💰 Как доход', `income:${logId}`),
+        Markup.button.callback('✅ Платёж в портфель', draft.duplicateOf ? `force:${logId}` : `confirm:${logId}`),
+        Markup.button.callback('💰 Доход', `income:${logId}`),
       ]);
+      rows.push([Markup.button.callback('💳 В раздел кредитки', `cc:${shortLogId}`)]);
       rows.push([Markup.button.callback('⏭ Пропустить', `skip:${logId}`)]);
     } else {
-      rows.push([Markup.button.callback(draft.duplicateOf ? '✅ Да, всё равно добавить' : '✅ Да, добавить', draft.duplicateOf ? `force:${logId}` : `confirm:${logId}`)]);
+      rows.push([Markup.button.callback(draft.duplicateOf ? '✅ В портфель, всё равно' : '✅ Платёж в портфель', draft.duplicateOf ? `force:${logId}` : `confirm:${logId}`)]);
+      rows.push([Markup.button.callback('💳 В раздел кредитки', `cc:${shortLogId}`)]);
     }
-
     rows.push([Markup.button.callback('🏷 Изменить категорию', `pc:${shortLogId}`)]);
     rows.push([Markup.button.callback('📁 Изменить портфель', `pp:${shortLogId}`)]);
     rows.push([Markup.button.callback('❌ Отмена', `cancel:${logId}`)]);
@@ -292,19 +207,13 @@ export class TelegramService implements OnModuleInit, OnApplicationShutdown {
   }
 
   private async onConfirm(ctx: any, logId: string, force = false) {
-    const tgId = String(ctx.from!.id);
+    const user = await this.userByTelegram(String(ctx.from!.id));
     await this.safeAnswer(ctx, 'Добавляю…');
-    const user = await this.userByTelegram(tgId);
-    if (!user) {
-      await this.safeReply(ctx, 'Аккаунт не привязан. Сначала подключите Telegram в приложении.');
-      return;
-    }
+    if (!user) return this.safeReply(ctx, 'Аккаунт не привязан.');
     try {
       const res = await this.ai.confirmRecognition({ logId, userId: user.id, force });
-      this.sessions.delete(tgId);
-      const text = res.alreadyCreated ? '✅ Эта операция уже была добавлена ранее.' : '✅ Расход добавлен в приложение.';
-      await this.safeEditOrReply(ctx, text);
-      return res;
+      this.sessions.delete(String(ctx.from!.id));
+      await this.safeEditOrReply(ctx, res.alreadyCreated ? '✅ Эта операция уже была добавлена ранее.' : '✅ Расход добавлен в портфель.');
     } catch (e) {
       this.logger.error(`Не удалось подтвердить расход: ${(e as Error).message}`, (e as Error).stack);
       await this.safeReply(ctx, `Не удалось добавить: ${(e as Error).message}`);
@@ -312,16 +221,12 @@ export class TelegramService implements OnModuleInit, OnApplicationShutdown {
   }
 
   private async onConfirmIncome(ctx: any, logId: string) {
-    const tgId = String(ctx.from!.id);
+    const user = await this.userByTelegram(String(ctx.from!.id));
     await this.safeAnswer(ctx, 'Добавляю доход…');
-    const user = await this.userByTelegram(tgId);
-    if (!user) {
-      await this.safeReply(ctx, 'Аккаунт не привязан. Сначала подключите Telegram в приложении.');
-      return;
-    }
+    if (!user) return this.safeReply(ctx, 'Аккаунт не привязан.');
     try {
       await this.ai.confirmImportedOperations({ userId: user.id, operations: [{ logId, action: 'income' }] });
-      this.sessions.delete(tgId);
+      this.sessions.delete(String(ctx.from!.id));
       await this.safeEditOrReply(ctx, '✅ Доход добавлен в приложение.');
     } catch (e) {
       this.logger.error(`Не удалось подтвердить доход: ${(e as Error).message}`, (e as Error).stack);
@@ -330,20 +235,54 @@ export class TelegramService implements OnModuleInit, OnApplicationShutdown {
   }
 
   private async onSkip(ctx: any, logId: string) {
-    const tgId = String(ctx.from!.id);
+    const user = await this.userByTelegram(String(ctx.from!.id));
     await this.safeAnswer(ctx, 'Пропускаю…');
-    const user = await this.userByTelegram(tgId);
-    if (!user) {
-      await this.safeReply(ctx, 'Аккаунт не привязан.');
-      return;
-    }
+    if (!user) return this.safeReply(ctx, 'Аккаунт не привязан.');
     try {
       await this.ai.confirmImportedOperations({ userId: user.id, operations: [{ logId, action: 'skip' }] });
-      this.sessions.delete(tgId);
+      this.sessions.delete(String(ctx.from!.id));
       await this.safeEditOrReply(ctx, '⏭ Операция пропущена.');
     } catch (e) {
-      this.logger.error(`Не удалось пропустить операцию: ${(e as Error).message}`, (e as Error).stack);
       await this.safeReply(ctx, `Не удалось пропустить: ${(e as Error).message}`);
+    }
+  }
+
+  private async onCancel(ctx: any) {
+    this.sessions.delete(String(ctx.from!.id));
+    await this.safeAnswer(ctx, 'Отменено');
+    await this.safeEditOrReply(ctx, '❌ Операция не добавлена.');
+  }
+
+  private async onPickCreditCard(ctx: any, logId: string) {
+    const user = await this.userByTelegram(String(ctx.from!.id));
+    await this.safeAnswer(ctx, 'Открываю кредитки…');
+    if (!user) return this.safeReply(ctx, 'Аккаунт не привязан.');
+    try {
+      const log = await this.prisma.aiRecognitionLog.findUnique({ where: { id: logId } });
+      const portfolioId = log?.portfolioId ?? await this.defaultPortfolioId(user.id);
+      if (!portfolioId) return this.safeReply(ctx, 'Не найден портфель для операции.');
+      const cards = await this.creditCards.list(portfolioId, user.id);
+      if (!cards.length) return this.safeReply(ctx, 'В разделе «Кредитки» ещё нет карт. Создайте карту в приложении и отправьте скрин ещё раз.');
+      const shortLogId = this.encodeId(logId);
+      const buttons = cards.map((card: any) => [Markup.button.callback(card.title, `setcc:${shortLogId}:${this.encodeId(card.id)}`)]);
+      await this.safeReply(ctx, 'Выберите кредитку, куда добавить покупку:', Markup.inlineKeyboard(buttons));
+    } catch (e) {
+      this.logger.error(`Ошибка выбора кредитки: ${(e as Error).message}`, (e as Error).stack);
+      await this.safeReply(ctx, 'Не удалось открыть список кредиток. Попробуйте ещё раз.');
+    }
+  }
+
+  private async onSetCreditCard(ctx: any, logId: string, cardId: string) {
+    const user = await this.userByTelegram(String(ctx.from!.id));
+    await this.safeAnswer(ctx, 'Добавляю в кредитку…');
+    if (!user) return this.safeReply(ctx, 'Аккаунт не привязан.');
+    try {
+      const charge = await this.creditCards.createChargeFromAi(cardId, user.id, logId);
+      this.sessions.delete(String(ctx.from!.id));
+      await this.safeEditOrReply(ctx, `✅ Покупка добавлена в кредитку: ${charge.title} — ${this.fmt(charge.amount)} ₽`);
+    } catch (e) {
+      this.logger.error(`Не удалось добавить в кредитку: ${(e as Error).message}`, (e as Error).stack);
+      await this.safeReply(ctx, `Не удалось добавить в кредитку: ${(e as Error).message}`);
     }
   }
 
@@ -351,111 +290,52 @@ export class TelegramService implements OnModuleInit, OnApplicationShutdown {
     await this.safeAnswer(ctx, 'Открываю категории…');
     try {
       const log = await this.prisma.aiRecognitionLog.findUnique({ where: { id: logId } });
-      if (!log?.portfolioId) {
-        await this.safeReply(ctx, 'Сессия устарела. Отправьте операцию ещё раз.');
-        return;
-      }
-      const cats = await this.prisma.category.findMany({
-        where: { isActive: true, OR: [{ portfolioId: null, isSystem: true }, { portfolioId: log.portfolioId }] },
-        orderBy: { name: 'asc' },
-        take: 50,
-      });
+      if (!log?.portfolioId) return this.safeReply(ctx, 'Сессия устарела. Отправьте операцию ещё раз.');
+      const cats = await this.prisma.category.findMany({ where: { isActive: true, OR: [{ portfolioId: null, isSystem: true }, { portfolioId: log.portfolioId }] }, orderBy: { name: 'asc' }, take: 50 });
       const shortLogId = this.encodeId(logId);
       const buttons = cats.map((c) => [Markup.button.callback(c.name, `sc:${shortLogId}:${this.encodeId(c.id)}`)]);
       await this.safeReply(ctx, 'Выберите категорию:', Markup.inlineKeyboard(buttons));
     } catch (e) {
-      this.logger.error(`Ошибка выбора категории: ${(e as Error).message}`, (e as Error).stack);
-      await this.safeReply(ctx, 'Не удалось открыть список категорий. Попробуйте ещё раз.');
+      await this.safeReply(ctx, 'Не удалось открыть список категорий.');
     }
   }
 
   private async onSetCategory(ctx: any, logId: string, categoryId: string) {
-    const tgId = String(ctx.from!.id);
+    const user = await this.userByTelegram(String(ctx.from!.id));
     await this.safeAnswer(ctx, 'Категория обновляется…');
-    const user = await this.userByTelegram(tgId);
-    if (!user) {
-      await this.safeReply(ctx, 'Аккаунт не привязан.');
-      return;
-    }
-    try {
-      const log = await this.prisma.aiRecognitionLog.findUnique({ where: { id: logId } });
-      if (!log?.portfolioId) {
-        await this.safeReply(ctx, 'Сессия устарела. Отправьте операцию ещё раз.');
-        return;
-      }
-      const cat = await this.prisma.category.findFirst({
-        where: { id: categoryId, isActive: true, OR: [{ portfolioId: null, isSystem: true }, { portfolioId: log.portfolioId }] },
-      });
-      if (!cat) {
-        await this.safeReply(ctx, 'Категория недоступна для выбранного портфеля.');
-        return;
-      }
-      await this.prisma.aiRecognitionLog.update({ where: { id: logId }, data: { parsedCategoryId: categoryId } });
-      const draft = await this.draftFromLog(logId);
-      if (!draft) {
-        await this.safeReply(ctx, 'Категория обновлена, но черновик не найден.');
-        return;
-      }
-      await this.safeReply(ctx, `✅ Категория изменена: ${cat.name}`);
-      await this.presentDraft(ctx, user.id, draft);
-    } catch (e) {
-      this.logger.error(`Ошибка обновления категории: ${(e as Error).message}`, (e as Error).stack);
-      await this.safeReply(ctx, 'Не удалось изменить категорию. Попробуйте ещё раз.');
-    }
+    if (!user) return this.safeReply(ctx, 'Аккаунт не привязан.');
+    const log = await this.prisma.aiRecognitionLog.findUnique({ where: { id: logId } });
+    if (!log?.portfolioId) return this.safeReply(ctx, 'Сессия устарела. Отправьте операцию ещё раз.');
+    const cat = await this.prisma.category.findFirst({ where: { id: categoryId, isActive: true, OR: [{ portfolioId: null, isSystem: true }, { portfolioId: log.portfolioId }] } });
+    if (!cat) return this.safeReply(ctx, 'Категория недоступна.');
+    await this.prisma.aiRecognitionLog.update({ where: { id: logId }, data: { parsedCategoryId: categoryId } });
+    const draft = await this.draftFromLog(logId);
+    await this.safeReply(ctx, `✅ Категория изменена: ${cat.name}`);
+    if (draft) await this.presentDraft(ctx, draft);
   }
 
   private async onPickPortfolio(ctx: any, logId: string) {
-    const tgId = String(ctx.from!.id);
+    const user = await this.userByTelegram(String(ctx.from!.id));
     await this.safeAnswer(ctx, 'Открываю портфели…');
-    const user = await this.userByTelegram(tgId);
-    if (!user) {
-      await this.safeReply(ctx, 'Аккаунт не привязан.');
-      return;
-    }
-    try {
-      const portfolios = await this.prisma.portfolio.findMany({
-        where: { members: { some: { userId: user.id, status: 'ACTIVE' } } },
-        orderBy: [{ isDefault: 'desc' }, { name: 'asc' }],
-      });
-      const shortLogId = this.encodeId(logId);
-      const buttons = portfolios.map((p) => [Markup.button.callback(p.name, `sp:${shortLogId}:${this.encodeId(p.id)}`)]);
-      await this.safeReply(ctx, 'Выберите портфель:', Markup.inlineKeyboard(buttons));
-    } catch (e) {
-      this.logger.error(`Ошибка выбора портфеля: ${(e as Error).message}`, (e as Error).stack);
-      await this.safeReply(ctx, 'Не удалось открыть список портфелей. Попробуйте ещё раз.');
-    }
+    if (!user) return this.safeReply(ctx, 'Аккаунт не привязан.');
+    const portfolios = await this.prisma.portfolio.findMany({ where: { members: { some: { userId: user.id, status: 'ACTIVE' } } }, orderBy: [{ isDefault: 'desc' }, { name: 'asc' }] });
+    const shortLogId = this.encodeId(logId);
+    const buttons = portfolios.map((p) => [Markup.button.callback(p.name, `sp:${shortLogId}:${this.encodeId(p.id)}`)]);
+    await this.safeReply(ctx, 'Выберите портфель:', Markup.inlineKeyboard(buttons));
   }
 
   private async onSetPortfolio(ctx: any, logId: string, portfolioId: string) {
-    const tgId = String(ctx.from!.id);
+    const user = await this.userByTelegram(String(ctx.from!.id));
     await this.safeAnswer(ctx, 'Портфель обновляется…');
-    const user = await this.userByTelegram(tgId);
-    if (!user) {
-      await this.safeReply(ctx, 'Аккаунт не привязан.');
-      return;
-    }
-    try {
-      const portfolio = await this.prisma.portfolio.findFirst({
-        where: { id: portfolioId, members: { some: { userId: user.id, status: 'ACTIVE' } } },
-      });
-      if (!portfolio) {
-        await this.safeReply(ctx, 'Портфель недоступен.');
-        return;
-      }
-      const log = await this.prisma.aiRecognitionLog.findUnique({ where: { id: logId } });
-      const parsedCategoryId = await this.categoryIdForPortfolio(log?.parsedCategoryId ?? null, portfolioId);
-      await this.prisma.aiRecognitionLog.update({ where: { id: logId }, data: { portfolioId, parsedCategoryId } });
-      const draft = await this.draftFromLog(logId);
-      if (!draft) {
-        await this.safeReply(ctx, 'Портфель обновлён, но черновик не найден.');
-        return;
-      }
-      await this.safeReply(ctx, `✅ Портфель изменён: ${portfolio.name}`);
-      await this.presentDraft(ctx, user.id, draft);
-    } catch (e) {
-      this.logger.error(`Ошибка обновления портфеля: ${(e as Error).message}`, (e as Error).stack);
-      await this.safeReply(ctx, 'Не удалось изменить портфель. Попробуйте ещё раз.');
-    }
+    if (!user) return this.safeReply(ctx, 'Аккаунт не привязан.');
+    const portfolio = await this.prisma.portfolio.findFirst({ where: { id: portfolioId, members: { some: { userId: user.id, status: 'ACTIVE' } } } });
+    if (!portfolio) return this.safeReply(ctx, 'Портфель недоступен.');
+    const log = await this.prisma.aiRecognitionLog.findUnique({ where: { id: logId } });
+    const parsedCategoryId = await this.categoryIdForPortfolio(log?.parsedCategoryId ?? null, portfolioId);
+    await this.prisma.aiRecognitionLog.update({ where: { id: logId }, data: { portfolioId, parsedCategoryId } });
+    const draft = await this.draftFromLog(logId);
+    await this.safeReply(ctx, `✅ Портфель изменён: ${portfolio.name}`);
+    if (draft) await this.presentDraft(ctx, draft);
   }
 
   private async draftFromLog(logId: string): Promise<RecognitionDraft | null> {
@@ -463,22 +343,13 @@ export class TelegramService implements OnModuleInit, OnApplicationShutdown {
     if (!log?.portfolioId) return null;
     const cat = log.parsedCategoryId ? await this.prisma.category.findUnique({ where: { id: log.parsedCategoryId } }) : null;
     const amount = log.parsedAmount == null ? null : Number(log.parsedAmount);
-    const parsedDate = log.parsedDate ? log.parsedDate.toISOString().slice(0, 10) : null;
     return {
       logId: log.id,
       portfolioId: log.portfolioId,
       parsed: {
-        type: 'expense',
-        amount,
-        currency: 'RUB',
-        date: parsedDate,
-        merchant: log.parsedMerchant,
-        description: log.parsedMerchant ?? log.extractedText,
-        category: cat?.name ?? null,
-        confidence: log.confidence ?? 0,
-        needsClarification: log.status !== 'CONFIRMED',
-        clarificationQuestion: null,
-        extractedText: log.extractedText,
+        type: 'expense', amount, currency: 'RUB', date: log.parsedDate ? log.parsedDate.toISOString().slice(0, 10) : null,
+        merchant: log.parsedMerchant, description: log.parsedMerchant ?? log.extractedText, category: cat?.name ?? null,
+        confidence: log.confidence ?? 0, needsClarification: log.status !== 'CONFIRMED', clarificationQuestion: null, extractedText: log.extractedText,
       },
       resolvedCategoryId: log.parsedCategoryId,
       resolvedCategoryName: cat?.name ?? null,
@@ -492,15 +363,11 @@ export class TelegramService implements OnModuleInit, OnApplicationShutdown {
     if (currentCategoryId) {
       const current = await this.prisma.category.findUnique({ where: { id: currentCategoryId } });
       if (current) {
-        const sameName = await this.prisma.category.findFirst({
-          where: { name: { equals: current.name, mode: 'insensitive' }, isActive: true, OR: [{ portfolioId }, { portfolioId: null, isSystem: true }] },
-        });
+        const sameName = await this.prisma.category.findFirst({ where: { name: { equals: current.name, mode: 'insensitive' }, isActive: true, OR: [{ portfolioId }, { portfolioId: null, isSystem: true }] } });
         if (sameName) return sameName.id;
       }
     }
-    const fallback = await this.prisma.category.findFirst({
-      where: { name: { equals: 'Другое', mode: 'insensitive' }, isActive: true, OR: [{ portfolioId }, { portfolioId: null, isSystem: true }] },
-    });
+    const fallback = await this.prisma.category.findFirst({ where: { name: { equals: 'Другое', mode: 'insensitive' }, isActive: true, OR: [{ portfolioId }, { portfolioId: null, isSystem: true }] } });
     return fallback?.id ?? null;
   }
 
@@ -512,28 +379,15 @@ export class TelegramService implements OnModuleInit, OnApplicationShutdown {
   }
 
   private async safeAnswer(ctx: any, text?: string) {
-    try {
-      await ctx.answerCbQuery(text);
-    } catch (e) {
-      this.logger.warn(`answerCbQuery failed: ${(e as Error).message}`);
-    }
+    try { await ctx.answerCbQuery(text); } catch (e) { this.logger.warn(`answerCbQuery failed: ${(e as Error).message}`); }
   }
 
   private async safeReply(ctx: any, text: string, extra?: any) {
-    try {
-      await ctx.reply(text, extra);
-    } catch (e) {
-      this.logger.warn(`reply failed: ${(e as Error).message}`);
-    }
+    try { await ctx.reply(text, extra); } catch (e) { this.logger.warn(`reply failed: ${(e as Error).message}`); }
   }
 
   private async safeEditOrReply(ctx: any, text: string) {
-    try {
-      await ctx.editMessageText(text);
-    } catch (e) {
-      this.logger.warn(`editMessageText failed: ${(e as Error).message}`);
-      await this.safeReply(ctx, text);
-    }
+    try { await ctx.editMessageText(text); } catch { await this.safeReply(ctx, text); }
   }
 
   private async userByTelegram(telegramId: string) {
@@ -541,31 +395,21 @@ export class TelegramService implements OnModuleInit, OnApplicationShutdown {
   }
 
   private async defaultPortfolioId(userId: string): Promise<string | null> {
-    const member = await this.prisma.portfolioMember.findFirst({
-      where: { userId, status: 'ACTIVE' },
-      orderBy: [{ portfolio: { isDefault: 'desc' } }, { joinedAt: 'asc' }],
-      select: { portfolioId: true },
-    });
+    const member = await this.prisma.portfolioMember.findFirst({ where: { userId, status: 'ACTIVE' }, orderBy: [{ portfolio: { isDefault: 'desc' } }, { joinedAt: 'asc' }], select: { portfolioId: true } });
     return member?.portfolioId ?? null;
   }
 
   private encodeId(id: string): string {
     const uuid = id.toLowerCase();
-    if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(uuid)) {
-      return Buffer.from(uuid.replace(/-/g, ''), 'hex').toString('base64url');
-    }
+    if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(uuid)) return Buffer.from(uuid.replace(/-/g, ''), 'hex').toString('base64url');
     return id;
   }
 
   private decodeId(value: string): string {
     try {
       const hex = Buffer.from(value, 'base64url').toString('hex');
-      if (/^[0-9a-f]{32}$/.test(hex)) {
-        return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
-      }
-    } catch {
-      // Старые callback-data уже содержат обычный UUID.
-    }
+      if (/^[0-9a-f]{32}$/.test(hex)) return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+    } catch {}
     return value;
   }
 
