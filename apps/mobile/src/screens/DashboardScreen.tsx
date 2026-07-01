@@ -49,7 +49,7 @@ export default function DashboardScreen({ navigation }: any) {
   return (
     <ScrollView
       style={{ flex: 1, backgroundColor: colors.bg }}
-      contentContainerStyle={{ padding: spacing(2.5) }}
+      contentContainerStyle={{ padding: spacing(2.5), paddingBottom: spacing(20) }}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.text} />}
     >
       <ScreenTitle>Главная</ScreenTitle>
