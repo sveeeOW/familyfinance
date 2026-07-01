@@ -42,6 +42,21 @@ export class AnalyticsService {
     return { interval, unit: rawUnit };
   }
 
+  private parseAnchorDate(text?: string | null): Date | null {
+    const raw = text?.split('[anchor:')[1]?.split(']')[0];
+    if (!raw) return null;
+    const date = new Date(raw);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+
+  private recurrenceFromComment(comment?: string | null): Recurrence | null {
+    if (!comment?.includes('Период:')) return null;
+    if (comment.includes('каждую неделю')) return Recurrence.WEEKLY;
+    if (comment.includes('каждый месяц')) return Recurrence.MONTHLY;
+    if (comment.includes('[period:')) return Recurrence.CUSTOM;
+    return null;
+  }
+
   private addPeriod(date: Date, recurrence: Recurrence, text?: string | null): Date {
     const next = new Date(date);
     if (recurrence === Recurrence.WEEKLY) {
@@ -94,8 +109,6 @@ export class AnalyticsService {
       return startDate >= rangeStart && startDate < rangeEnd ? 1 : 0;
     }
 
-    // Для ежемесячных событий дата — это не конкретный месяц, а якорь расписания.
-    // Считаем по числу месяца: ипотека каждый 22 день, аренда каждый 1 день и т.п.
     if (recurrence === Recurrence.MONTHLY && paymentDay) {
       return this.countMonthlyByDay({ firstDate: startDate, paymentDay, rangeStart, rangeEnd });
     }
@@ -144,14 +157,87 @@ export class AnalyticsService {
     }, 0);
   }
 
+  private hasMatchingRecurringPayment(expense: any, recurring: any[], recurrence: Recurrence, paymentDay: number) {
+    return recurring.some((item) => {
+      const sameAmount = Math.abs(Number(item.amount) - Number(expense.amount)) < 0.01;
+      const sameDay = Number(item.paymentDay) === Number(paymentDay);
+      const sameRecurrence = item.recurrence === recurrence;
+      const sameCategory = (item.categoryId ?? null) === (expense.categoryId ?? null);
+      const expenseTitle = String(expense.title ?? expense.merchant ?? '').trim().toLowerCase();
+      const itemTitle = String(item.title ?? '').trim().toLowerCase();
+      const sameTitle = !expenseTitle || !itemTitle || expenseTitle === itemTitle;
+      return sameAmount && sameDay && sameRecurrence && sameCategory && sameTitle;
+    });
+  }
+
+  private recurringExpensesFromExpenseComments(expenses: any[], recurring: any[], start: Date, end: Date) {
+    return expenses.reduce((sum, expense) => {
+      const recurrence = this.recurrenceFromComment(expense.comment);
+      if (!recurrence) return sum;
+
+      const anchor = this.parseAnchorDate(expense.comment) ?? expense.date;
+      const paymentDay = anchor.getDate();
+      if (this.hasMatchingRecurringPayment(expense, recurring, recurrence, paymentDay)) return sum;
+
+      const count = this.countOccurrences({
+        startDate: anchor,
+        recurrence,
+        rangeStart: start,
+        rangeEnd: end,
+        text: expense.comment,
+        paymentDay,
+      });
+      return sum + Number(expense.amount) * count;
+    }, 0);
+  }
+
+  private addRecurringExpenseCommentsToCategories(
+    byCategoryMap: Map<string, { id: string; name: string; color?: string; icon?: string; amount: number }>,
+    expenses: any[],
+    recurring: any[],
+    start: Date,
+    end: Date,
+  ) {
+    for (const expense of expenses) {
+      const recurrence = this.recurrenceFromComment(expense.comment);
+      if (!recurrence) continue;
+      const anchor = this.parseAnchorDate(expense.comment) ?? expense.date;
+      const paymentDay = anchor.getDate();
+      if (this.hasMatchingRecurringPayment(expense, recurring, recurrence, paymentDay)) continue;
+      const count = this.countOccurrences({
+        startDate: anchor,
+        recurrence,
+        rangeStart: start,
+        rangeEnd: end,
+        text: expense.comment,
+        paymentDay,
+      });
+      if (!count) continue;
+      const key = expense.category?.id ?? `expense-recurring-${expense.id}`;
+      const name = expense.category?.name ?? expense.title ?? expense.merchant ?? 'Регулярный расход';
+      const prev = byCategoryMap.get(key);
+      byCategoryMap.set(key, {
+        id: key,
+        name,
+        color: expense.category?.color ?? undefined,
+        icon: expense.category?.icon ?? undefined,
+        amount: (prev?.amount ?? 0) + Number(expense.amount) * count,
+      });
+    }
+  }
+
   async summary(portfolioId: string, userId: string) {
     await this.access.requireMember(portfolioId, userId);
     const { start, end } = this.monthBounds();
 
-    const [incomes, expenses, recurring, credits] = await Promise.all([
+    const [incomes, expenses, recurringExpenseMarkers, recurring, credits] = await Promise.all([
       this.prisma.income.findMany({ where: { portfolioId } }),
       this.prisma.expense.findMany({
         where: { portfolioId, status: ExpenseStatus.CONFIRMED, date: { gte: start, lt: end } },
+        include: { category: { select: { id: true, name: true, color: true, icon: true } } },
+      }),
+      this.prisma.expense.findMany({
+        where: { portfolioId, status: ExpenseStatus.CONFIRMED, comment: { contains: 'Период:' } },
         include: { category: { select: { id: true, name: true, color: true, icon: true } } },
       }),
       this.prisma.recurringPayment.findMany({
@@ -163,7 +249,8 @@ export class AnalyticsService {
 
     const scheduledIncome = this.incomeForRange(incomes, start, end);
     const actualExpense = expenses.reduce((s, e) => s + Number(e.amount), 0);
-    const plannedExpense = this.recurringForRange(recurring, start, end);
+    const plannedExpense = this.recurringForRange(recurring, start, end)
+      + this.recurringExpensesFromExpenseComments(recurringExpenseMarkers, recurring, start, end);
     const creditExpense = credits.reduce((s, c) => s + Number(c.monthlyPayment), 0);
     const totalIncome = scheduledIncome;
     const totalExpense = actualExpense + plannedExpense + creditExpense;
@@ -204,6 +291,7 @@ export class AnalyticsService {
         amount: (prev?.amount ?? 0) + Number(r.amount) * count,
       });
     }
+    this.addRecurringExpenseCommentsToCategories(byCategoryMap, recurringExpenseMarkers, recurring, start, end);
     const byCategory = [...byCategoryMap.values()].sort((a, b) => b.amount - a.amount);
 
     const byMemberMap = new Map<string, number>();
@@ -225,7 +313,8 @@ export class AnalyticsService {
 
     const today = new Date();
     const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-    const remainingRecurring = this.recurringForRange(recurring, todayStart, end);
+    const remainingRecurring = this.recurringForRange(recurring, todayStart, end)
+      + this.recurringExpensesFromExpenseComments(recurringExpenseMarkers, recurring, todayStart, end);
     const remainingCredits = credits.filter((c) => c.paymentDay >= today.getDate()).reduce((s, c) => s + Number(c.monthlyPayment), 0);
     const remainingObligatory = remainingRecurring + remainingCredits;
     const freeMoney = balance - remainingObligatory;
@@ -252,9 +341,10 @@ export class AnalyticsService {
     const now = new Date();
     const from = new Date(now.getFullYear(), now.getMonth() - (months - 1), 1);
 
-    const [incomes, expenses, recurring, credits] = await Promise.all([
+    const [incomes, expenses, recurringExpenseMarkers, recurring, credits] = await Promise.all([
       this.prisma.income.findMany({ where: { portfolioId } }),
       this.prisma.expense.findMany({ where: { portfolioId, status: ExpenseStatus.CONFIRMED, date: { gte: from } } }),
+      this.prisma.expense.findMany({ where: { portfolioId, status: ExpenseStatus.CONFIRMED, comment: { contains: 'Период:' } } }),
       this.prisma.recurringPayment.findMany({ where: { portfolioId, status: CreditStatus.ACTIVE } }),
       this.prisma.credit.findMany({ where: { portfolioId, status: CreditStatus.ACTIVE } }),
     ]);
@@ -267,7 +357,9 @@ export class AnalyticsService {
       buckets[key] = {
         month: key,
         income: this.incomeForRange(incomes, d, next),
-        expense: this.recurringForRange(recurring, d, next) + credits.reduce((s, c) => s + Number(c.monthlyPayment), 0),
+        expense: this.recurringForRange(recurring, d, next)
+          + this.recurringExpensesFromExpenseComments(recurringExpenseMarkers, recurring, d, next)
+          + credits.reduce((s, c) => s + Number(c.monthlyPayment), 0),
       };
     }
     const keyOf = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
@@ -292,8 +384,9 @@ export class AnalyticsService {
     const now = new Date();
     const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 
-    const [incomes, recurring, credits, currentMonthExpenses, variableExpenses] = await Promise.all([
+    const [incomes, recurringExpenseMarkers, recurring, credits, currentMonthExpenses, variableExpenses] = await Promise.all([
       this.prisma.income.findMany({ where: { portfolioId } }),
+      this.prisma.expense.findMany({ where: { portfolioId, status: ExpenseStatus.CONFIRMED, comment: { contains: 'Период:' } } }),
       this.prisma.recurringPayment.findMany({ where: { portfolioId, status: CreditStatus.ACTIVE } }),
       this.prisma.credit.findMany({ where: { portfolioId, status: CreditStatus.ACTIVE } }),
       this.prisma.expense.findMany({ where: { portfolioId, status: ExpenseStatus.CONFIRMED, date: { gte: start, lt: end } } }),
@@ -318,7 +411,8 @@ export class AnalyticsService {
 
     const actualIncomeToDate = this.incomeForRange(incomes, start, todayStart);
     const restIncome = this.incomeForRange(incomes, todayStart, end);
-    const restRecurring = this.recurringForRange(recurring, todayStart, end);
+    const restRecurring = this.recurringForRange(recurring, todayStart, end)
+      + this.recurringExpensesFromExpenseComments(recurringExpenseMarkers, recurring, todayStart, end);
     const restExpense = restRecurring + remainingCredits + futureOneOffExpense;
     const actualBalance = actualIncomeToDate - actualExpenseToDate;
     const endOfMonthBalance = actualBalance + restIncome - restExpense;
@@ -329,7 +423,9 @@ export class AnalyticsService {
       const d = new Date(start.getFullYear(), start.getMonth() + i, 1);
       const next = new Date(d.getFullYear(), d.getMonth() + 1, 1);
       expectedIncome += this.incomeForRange(incomes, d, next);
-      obligatory += this.recurringForRange(recurring, d, next) + creditMonthly;
+      obligatory += this.recurringForRange(recurring, d, next)
+        + this.recurringExpensesFromExpenseComments(recurringExpenseMarkers, recurring, d, next)
+        + creditMonthly;
     }
     expectedIncome = expectedIncome / 6;
     obligatory = obligatory / 6;
