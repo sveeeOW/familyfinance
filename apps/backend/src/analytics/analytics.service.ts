@@ -105,7 +105,6 @@ export class AnalyticsService {
     }, 0);
   }
 
-  // ─── Сводка для главного экрана (§23.1) ───────────────────────────────────
   async summary(portfolioId: string, userId: string) {
     await this.access.requireMember(portfolioId, userId);
     const { start, end } = this.monthBounds();
@@ -130,10 +129,8 @@ export class AnalyticsService {
     const totalIncome = scheduledIncome;
     const totalExpense = actualExpense + plannedExpense + creditExpense;
     const balance = totalIncome - totalExpense;
-
     const obligatory = plannedExpense + creditExpense;
 
-    // расходы по категориям: фактические расходы + плановые регулярные платежи
     const byCategoryMap = new Map<string, { id: string; name: string; color?: string; icon?: string; amount: number }>();
     for (const e of expenses) {
       const key = e.category?.id ?? 'none';
@@ -181,13 +178,10 @@ export class AnalyticsService {
     const shared = totalExpense - personal;
 
     const today = new Date();
-    const remainingRecurring = recurring.reduce((sum, r) => {
-      const monthCount = this.countOccurrences({ startDate: r.nextPaymentDate, recurrence: r.recurrence, rangeStart: today, rangeEnd: end, text: r.comment });
-      return sum + Number(r.amount) * monthCount;
-    }, 0);
+    const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    const remainingRecurring = this.recurringForRange(recurring, todayStart, end);
     const remainingCredits = credits.filter((c) => c.paymentDay >= today.getDate()).reduce((s, c) => s + Number(c.monthlyPayment), 0);
     const remainingObligatory = remainingRecurring + remainingCredits;
-
     const freeMoney = balance - remainingObligatory;
 
     return {
@@ -207,7 +201,6 @@ export class AnalyticsService {
     };
   }
 
-  // ─── Доходы/расходы по месяцам (§23.2) ────────────────────────────────────
   async monthly(portfolioId: string, userId: string, months = 6) {
     await this.access.requireMember(portfolioId, userId);
     const now = new Date();
@@ -247,15 +240,17 @@ export class AnalyticsService {
     return s.byCategory;
   }
 
-  // ─── Прогноз остатка (§17.1) и на 3/6/12 месяцев ──────────────────────────
   async forecast(portfolioId: string, userId: string) {
     await this.access.requireMember(portfolioId, userId);
-    const { start } = this.monthBounds();
+    const { start, end } = this.monthBounds();
+    const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 
-    const [incomes, recurring, credits, variableExpenses] = await Promise.all([
+    const [incomes, recurring, credits, currentMonthExpenses, variableExpenses] = await Promise.all([
       this.prisma.income.findMany({ where: { portfolioId } }),
       this.prisma.recurringPayment.findMany({ where: { portfolioId } }),
       this.prisma.credit.findMany({ where: { portfolioId } }),
+      this.prisma.expense.findMany({ where: { portfolioId, status: ExpenseStatus.CONFIRMED, date: { gte: start, lt: end } } }),
       this.prisma.expense.findMany({
         where: {
           portfolioId,
@@ -265,13 +260,30 @@ export class AnalyticsService {
       }),
     ]);
 
+    const creditMonthly = credits.reduce((s, c) => s + Number(c.monthlyPayment), 0);
+    const remainingCredits = credits.filter((c) => c.paymentDay >= now.getDate()).reduce((s, c) => s + Number(c.monthlyPayment), 0);
+
+    const actualExpenseToDate = currentMonthExpenses
+      .filter((e) => e.date < todayStart)
+      .reduce((s, e) => s + Number(e.amount), 0);
+    const futureOneOffExpense = currentMonthExpenses
+      .filter((e) => e.date >= todayStart)
+      .reduce((s, e) => s + Number(e.amount), 0);
+
+    const actualIncomeToDate = this.incomeForRange(incomes, start, todayStart);
+    const restIncome = this.incomeForRange(incomes, todayStart, end);
+    const restRecurring = this.recurringForRange(recurring, todayStart, end);
+    const restExpense = restRecurring + remainingCredits + futureOneOffExpense;
+    const actualBalance = actualIncomeToDate - actualExpenseToDate;
+    const endOfMonthBalance = actualBalance + restIncome - restExpense;
+
     let expectedIncome = 0;
     let obligatory = 0;
     for (let i = 0; i < 6; i++) {
       const d = new Date(start.getFullYear(), start.getMonth() + i, 1);
       const next = new Date(d.getFullYear(), d.getMonth() + 1, 1);
       expectedIncome += this.incomeForRange(incomes, d, next);
-      obligatory += this.recurringForRange(recurring, d, next) + credits.reduce((s, c) => s + Number(c.monthlyPayment), 0);
+      obligatory += this.recurringForRange(recurring, d, next) + creditMonthly;
     }
     expectedIncome = expectedIncome / 6;
     obligatory = obligatory / 6;
@@ -281,10 +293,22 @@ export class AnalyticsService {
     const horizon = (m: number) => Math.round(monthlyForecast * m);
 
     return {
+      actualToDate: {
+        income: Math.round(actualIncomeToDate),
+        expense: Math.round(actualExpenseToDate),
+        balance: Math.round(actualBalance),
+      },
+      restOfMonth: {
+        income: Math.round(restIncome),
+        expense: Math.round(restExpense),
+        recurring: Math.round(restRecurring),
+        credits: Math.round(remainingCredits),
+        oneOff: Math.round(futureOneOffExpense),
+      },
       expectedIncome: Math.round(expectedIncome),
       obligatory: Math.round(obligatory),
       avgVariableExpense: Math.round(avgVariable),
-      endOfMonthBalance: Math.round(monthlyForecast),
+      endOfMonthBalance: Math.round(endOfMonthBalance),
       forecast: {
         currentMonth: Math.round(monthlyForecast),
         in3Months: horizon(3),
@@ -294,7 +318,6 @@ export class AnalyticsService {
     };
   }
 
-  // ─── Кредитная нагрузка (§17.3) ───────────────────────────────────────────
   async creditsAnalytics(portfolioId: string, userId: string) {
     await this.access.requireMember(portfolioId, userId);
     const credits = await this.prisma.credit.findMany({ where: { portfolioId } });
