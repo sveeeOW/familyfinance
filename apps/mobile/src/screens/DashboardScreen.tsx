@@ -40,11 +40,11 @@ export default function DashboardScreen({ navigation }: any) {
   };
 
   const actualBalance = forecast?.actualToDate?.balance ?? summary?.balance ?? 0;
-  const futureIncome = forecast?.restOfMonth?.income ?? forecast?.expectedIncome ?? 0;
-  // На главной показываем именно ожидаемые расходы месяца: регулярные платежи + кредиты.
-  // restOfMonth — это остаток до конца месяца, поэтому уже прошедшие регулярки там могут не отображаться.
-  const futureExpense = summary?.plannedExpense ?? forecast?.restOfMonth?.expense ?? forecast?.obligatory ?? 0;
-  const forecastBalance = forecast?.endOfMonthBalance ?? 0;
+  // Блок прогноза должен быть арифметически связан с теми же строками, которые показаны ниже.
+  // Иначе получается: доходы - расходы = одно число, а крупная сумма прогноза — другое.
+  const futureIncome = summary?.totalIncome ?? forecast?.restOfMonth?.income ?? forecast?.expectedIncome ?? 0;
+  const futureExpense = summary?.totalExpense ?? summary?.plannedExpense ?? forecast?.restOfMonth?.expense ?? forecast?.obligatory ?? 0;
+  const forecastBalance = futureIncome - futureExpense;
 
   return (
     <ScrollView
@@ -72,7 +72,7 @@ export default function DashboardScreen({ navigation }: any) {
           <Row label="Ожидаемые расходы" value={<Money value={futureExpense} tone="expense" size={16} />} />
         </View>
         <Text style={{ color: colors.textMuted, marginTop: spacing(1), fontSize: 12 }}>
-          В ожидаемые расходы входят регулярные платежи и ежемесячные платежи по кредитам текущего месяца.
+          Прогноз считается как ожидаемые доходы месяца минус ожидаемые расходы месяца.
         </Text>
       </Card>
 
