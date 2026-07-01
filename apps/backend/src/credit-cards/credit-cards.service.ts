@@ -22,11 +22,13 @@ export class CreditCardsService {
   private ensureTables() {
     if (!this.tablesReady) {
       this.tablesReady = (async () => {
+        // В текущей Prisma-схеме id хранятся как text, не как uuid @db.Uuid.
+        // Поэтому таблицы кредиток тоже создаём с text-id, иначе FK к portfolios/users падает.
         await this.prisma.$executeRawUnsafe(`
           CREATE TABLE IF NOT EXISTS credit_cards (
-            id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-            portfolio_id uuid NOT NULL REFERENCES portfolios(id) ON DELETE CASCADE,
-            user_id uuid REFERENCES users(id),
+            id text PRIMARY KEY DEFAULT gen_random_uuid()::text,
+            portfolio_id text NOT NULL REFERENCES portfolios(id) ON DELETE CASCADE,
+            user_id text REFERENCES users(id),
             title text NOT NULL,
             limit_amount numeric(18,2) NOT NULL DEFAULT 0,
             grace_days integer NOT NULL DEFAULT 120,
@@ -36,25 +38,25 @@ export class CreditCardsService {
         `);
         await this.prisma.$executeRawUnsafe(`
           CREATE TABLE IF NOT EXISTS credit_card_charges (
-            id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-            credit_card_id uuid NOT NULL REFERENCES credit_cards(id) ON DELETE CASCADE,
-            user_id uuid REFERENCES users(id),
+            id text PRIMARY KEY DEFAULT gen_random_uuid()::text,
+            credit_card_id text NOT NULL REFERENCES credit_cards(id) ON DELETE CASCADE,
+            user_id text REFERENCES users(id),
             title text NOT NULL,
             amount numeric(18,2) NOT NULL,
             remaining_amount numeric(18,2) NOT NULL,
             spent_at date NOT NULL DEFAULT CURRENT_DATE,
             grace_days integer NOT NULL DEFAULT 120,
-            ai_log_id uuid,
+            ai_log_id text,
             closed_at date,
             created_at timestamptz NOT NULL DEFAULT now()
           );
         `);
         await this.prisma.$executeRawUnsafe(`
           CREATE TABLE IF NOT EXISTS credit_card_payments (
-            id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-            credit_card_id uuid NOT NULL REFERENCES credit_cards(id) ON DELETE CASCADE,
-            charge_id uuid REFERENCES credit_card_charges(id) ON DELETE SET NULL,
-            user_id uuid REFERENCES users(id),
+            id text PRIMARY KEY DEFAULT gen_random_uuid()::text,
+            credit_card_id text NOT NULL REFERENCES credit_cards(id) ON DELETE CASCADE,
+            charge_id text REFERENCES credit_card_charges(id) ON DELETE SET NULL,
+            user_id text REFERENCES users(id),
             amount numeric(18,2) NOT NULL,
             paid_at date NOT NULL DEFAULT CURRENT_DATE,
             created_at timestamptz NOT NULL DEFAULT now()
@@ -72,27 +74,27 @@ export class CreditCardsService {
     await this.ensureTables();
     await this.access.requireMember(portfolioId, userId);
     const cards = await this.prisma.$queryRaw<any[]>`
-      SELECT id::text, portfolio_id::text AS "portfolioId", user_id::text AS "userId", title,
+      SELECT id, portfolio_id AS "portfolioId", user_id AS "userId", title,
              limit_amount AS "limitAmount", grace_days AS "graceDays", created_at AS "createdAt", updated_at AS "updatedAt"
       FROM credit_cards
-      WHERE portfolio_id = ${portfolioId}::uuid
+      WHERE portfolio_id = ${portfolioId}
       ORDER BY created_at ASC
     `;
     const ids = cards.map((c) => c.id);
     if (!ids.length) return [];
     const charges = await this.prisma.$queryRaw<any[]>`
-      SELECT id::text, credit_card_id::text AS "creditCardId", user_id::text AS "userId", title,
+      SELECT id, credit_card_id AS "creditCardId", user_id AS "userId", title,
              amount, remaining_amount AS "remainingAmount", spent_at AS "spentAt", grace_days AS "graceDays",
-             ai_log_id::text AS "aiLogId", closed_at AS "closedAt", created_at AS "createdAt"
+             ai_log_id AS "aiLogId", closed_at AS "closedAt", created_at AS "createdAt"
       FROM credit_card_charges
-      WHERE credit_card_id::text = ANY(${ids})
+      WHERE credit_card_id = ANY(${ids})
       ORDER BY spent_at DESC, created_at DESC
     `;
     const payments = await this.prisma.$queryRaw<any[]>`
-      SELECT id::text, credit_card_id::text AS "creditCardId", charge_id::text AS "chargeId", user_id::text AS "userId",
+      SELECT id, credit_card_id AS "creditCardId", charge_id AS "chargeId", user_id AS "userId",
              amount, paid_at AS "paidAt", created_at AS "createdAt"
       FROM credit_card_payments
-      WHERE credit_card_id::text = ANY(${ids})
+      WHERE credit_card_id = ANY(${ids})
       ORDER BY paid_at DESC, created_at DESC
     `;
     return cards.map((card) => this.serializeCard(card, charges, payments));
@@ -103,8 +105,8 @@ export class CreditCardsService {
     await this.access.require(dto.portfolioId, userId, 'add');
     const rows = await this.prisma.$queryRaw<any[]>`
       INSERT INTO credit_cards (portfolio_id, user_id, title, limit_amount, grace_days)
-      VALUES (${dto.portfolioId}::uuid, ${userId}::uuid, ${dto.title}, ${dto.limitAmount}, ${dto.graceDays ?? 120})
-      RETURNING id::text, portfolio_id::text AS "portfolioId", user_id::text AS "userId", title,
+      VALUES (${dto.portfolioId}, ${userId}, ${dto.title}, ${dto.limitAmount}, ${dto.graceDays ?? 120})
+      RETURNING id, portfolio_id AS "portfolioId", user_id AS "userId", title,
                 limit_amount AS "limitAmount", grace_days AS "graceDays", created_at AS "createdAt", updated_at AS "updatedAt"
     `;
     return this.serializeCard(rows[0], [], []);
@@ -120,8 +122,8 @@ export class CreditCardsService {
           limit_amount = COALESCE(${dto.limitAmount ?? null}, limit_amount),
           grace_days = COALESCE(${dto.graceDays ?? null}, grace_days),
           updated_at = now()
-      WHERE id = ${id}::uuid
-      RETURNING id::text, portfolio_id::text AS "portfolioId", user_id::text AS "userId", title,
+      WHERE id = ${id}
+      RETURNING id, portfolio_id AS "portfolioId", user_id AS "userId", title,
                 limit_amount AS "limitAmount", grace_days AS "graceDays", created_at AS "createdAt", updated_at AS "updatedAt"
     `;
     return this.serializeCard(rows[0], [], []);
@@ -131,7 +133,7 @@ export class CreditCardsService {
     await this.ensureTables();
     const card = await this.cardById(id);
     await this.access.require(card.portfolioId, userId, 'edit');
-    await this.prisma.$executeRaw`DELETE FROM credit_cards WHERE id = ${id}::uuid`;
+    await this.prisma.$executeRaw`DELETE FROM credit_cards WHERE id = ${id}`;
     return { success: true };
   }
 
@@ -145,10 +147,10 @@ export class CreditCardsService {
     const spentAt = dto.spentAt ? new Date(dto.spentAt) : new Date();
     const rows = await this.prisma.$queryRaw<any[]>`
       INSERT INTO credit_card_charges (credit_card_id, user_id, title, amount, remaining_amount, spent_at, grace_days, ai_log_id)
-      VALUES (${cardId}::uuid, ${userId}::uuid, ${title}, ${amount}, ${amount}, ${spentAt}, ${dto.graceDays ?? card.graceDays}, ${dto.aiLogId ?? null}::uuid)
-      RETURNING id::text, credit_card_id::text AS "creditCardId", user_id::text AS "userId", title,
+      VALUES (${cardId}, ${userId}, ${title}, ${amount}, ${amount}, ${spentAt}, ${dto.graceDays ?? card.graceDays}, ${dto.aiLogId ?? null})
+      RETURNING id, credit_card_id AS "creditCardId", user_id AS "userId", title,
                 amount, remaining_amount AS "remainingAmount", spent_at AS "spentAt", grace_days AS "graceDays",
-                ai_log_id::text AS "aiLogId", closed_at AS "closedAt", created_at AS "createdAt"
+                ai_log_id AS "aiLogId", closed_at AS "closedAt", created_at AS "createdAt"
     `;
     return this.serializeCharge(rows[0]);
   }
@@ -168,10 +170,10 @@ export class CreditCardsService {
           remaining_amount = ${remaining},
           spent_at = COALESCE(${dto.spentAt ? new Date(dto.spentAt) : null}, spent_at),
           closed_at = CASE WHEN ${remaining} = 0 THEN COALESCE(closed_at, CURRENT_DATE) ELSE NULL END
-      WHERE id = ${chargeId}::uuid
-      RETURNING id::text, credit_card_id::text AS "creditCardId", user_id::text AS "userId", title,
+      WHERE id = ${chargeId}
+      RETURNING id, credit_card_id AS "creditCardId", user_id AS "userId", title,
                 amount, remaining_amount AS "remainingAmount", spent_at AS "spentAt", grace_days AS "graceDays",
-                ai_log_id::text AS "aiLogId", closed_at AS "closedAt", created_at AS "CreatedAt"
+                ai_log_id AS "aiLogId", closed_at AS "closedAt", created_at AS "createdAt"
     `;
     return this.serializeCharge(rows[0]);
   }
@@ -181,7 +183,7 @@ export class CreditCardsService {
     const charge = await this.chargeById(chargeId);
     const card = await this.cardById(charge.creditCardId);
     await this.access.require(card.portfolioId, userId, 'edit');
-    await this.prisma.$executeRaw`DELETE FROM credit_card_charges WHERE id = ${chargeId}::uuid`;
+    await this.prisma.$executeRaw`DELETE FROM credit_card_charges WHERE id = ${chargeId}`;
     return { success: true };
   }
 
@@ -193,9 +195,9 @@ export class CreditCardsService {
     if (!Number.isFinite(rest) || rest <= 0) throw new BadRequestException('Некорректная сумма платежа');
     const paidAt = dto.paidAt ? new Date(dto.paidAt) : new Date();
     const charges = await this.prisma.$queryRaw<any[]>`
-      SELECT id::text, amount, remaining_amount AS "remainingAmount"
+      SELECT id, amount, remaining_amount AS "remainingAmount"
       FROM credit_card_charges
-      WHERE credit_card_id = ${cardId}::uuid AND remaining_amount > 0
+      WHERE credit_card_id = ${cardId} AND remaining_amount > 0
       ORDER BY spent_at ASC, created_at ASC
     `;
     const payments: any[] = [];
@@ -207,12 +209,12 @@ export class CreditCardsService {
       await this.prisma.$executeRaw`
         UPDATE credit_card_charges
         SET remaining_amount = ${nextRemaining}, closed_at = CASE WHEN ${nextRemaining} = 0 THEN ${paidAt} ELSE NULL END
-        WHERE id = ${charge.id}::uuid
+        WHERE id = ${charge.id}
       `;
       const rows = await this.prisma.$queryRaw<any[]>`
         INSERT INTO credit_card_payments (credit_card_id, charge_id, user_id, amount, paid_at)
-        VALUES (${cardId}::uuid, ${charge.id}::uuid, ${userId}::uuid, ${applied}, ${paidAt})
-        RETURNING id::text, credit_card_id::text AS "creditCardId", charge_id::text AS "chargeId", user_id::text AS "userId", amount, paid_at AS "paidAt", created_at AS "createdAt"
+        VALUES (${cardId}, ${charge.id}, ${userId}, ${applied}, ${paidAt})
+        RETURNING id, credit_card_id AS "creditCardId", charge_id AS "chargeId", user_id AS "userId", amount, paid_at AS "paidAt", created_at AS "createdAt"
       `;
       payments.push(this.serializePayment(rows[0]));
     }
@@ -239,9 +241,9 @@ export class CreditCardsService {
 
   private async cardById(id: string) {
     const rows = await this.prisma.$queryRaw<any[]>`
-      SELECT id::text, portfolio_id::text AS "portfolioId", user_id::text AS "userId", title,
+      SELECT id, portfolio_id AS "portfolioId", user_id AS "userId", title,
              limit_amount AS "limitAmount", grace_days AS "graceDays"
-      FROM credit_cards WHERE id = ${id}::uuid LIMIT 1
+      FROM credit_cards WHERE id = ${id} LIMIT 1
     `;
     if (!rows[0]) throw new NotFoundException('Кредитная карта не найдена');
     return this.serializeCard(rows[0], [], []);
@@ -249,8 +251,8 @@ export class CreditCardsService {
 
   private async chargeById(id: string) {
     const rows = await this.prisma.$queryRaw<any[]>`
-      SELECT id::text, credit_card_id::text AS "creditCardId", amount, remaining_amount AS "remainingAmount"
-      FROM credit_card_charges WHERE id = ${id}::uuid LIMIT 1
+      SELECT id, credit_card_id AS "creditCardId", amount, remaining_amount AS "remainingAmount"
+      FROM credit_card_charges WHERE id = ${id} LIMIT 1
     `;
     if (!rows[0]) throw new NotFoundException('Покупка по кредитке не найдена');
     return { ...rows[0], amount: Number(rows[0].amount), remainingAmount: Number(rows[0].remainingAmount) };
