@@ -42,7 +42,8 @@ export default function DashboardScreen({ navigation }: any) {
   const actualBalance = summary?.availableNow ?? forecast?.actualToDate?.balance ?? summary?.balance ?? 0;
   const futureIncome = summary?.totalIncome ?? forecast?.restOfMonth?.income ?? forecast?.expectedIncome ?? 0;
   const futureExpense = summary?.totalExpense ?? summary?.plannedExpense ?? forecast?.restOfMonth?.expense ?? forecast?.obligatory ?? 0;
-  const forecastBalance = futureIncome - futureExpense;
+  const monthBalance = futureIncome - futureExpense;
+  const forecastBalance = actualBalance + monthBalance;
 
   return (
     <ScrollView
@@ -65,12 +66,16 @@ export default function DashboardScreen({ navigation }: any) {
         <Text style={labelStyle}>Прогноз на конец месяца</Text>
         <Money value={forecastBalance} />
         <View style={{ marginTop: spacing(1.25), gap: spacing(0.75) }}>
+          <Row label="Доступно сейчас" value={<Money value={actualBalance} size={16} />} />
+          <Divider />
+          <Row label="Баланс месяца" value={<Money value={monthBalance} size={16} />} />
+          <Divider />
           <Row label="Ожидаемые доходы" value={<Money value={futureIncome} tone="income" size={16} />} />
           <Divider />
           <Row label="Ожидаемые расходы" value={<Money value={futureExpense} tone="expense" size={16} />} />
         </View>
         <Text style={{ color: colors.textMuted, marginTop: spacing(1), fontSize: 12 }}>
-          Прогноз считается как ожидаемые доходы месяца минус ожидаемые расходы месяца.
+          Прогноз считается как доступная сумма сейчас плюс баланс текущего месяца.
         </Text>
       </Card>
 
