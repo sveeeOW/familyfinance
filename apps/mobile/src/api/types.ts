@@ -22,6 +22,7 @@ export interface Portfolio {
   type: PortfolioType;
   currency: string;
   description?: string | null;
+  currentBalance?: string | number | null;
   isDefault: boolean;
   members?: { user: { id: string; name: string }; role?: string; accessLevel?: string; id?: string }[];
 }
@@ -63,7 +64,11 @@ export interface Expense {
 export interface AnalyticsSummary {
   totalIncome: number;
   totalExpense: number;
+  actualExpense: number;
+  plannedExpense: number;
   balance: number;
+  currentBalance?: number;
+  availableNow?: number;
   obligatoryTotal: number;
   remainingObligatory: number;
   freeMoney: number;
