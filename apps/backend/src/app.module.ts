@@ -11,6 +11,7 @@ import { CategoriesModule } from './categories/categories.module';
 import { IncomesModule } from './incomes/incomes.module';
 import { ExpensesModule } from './expenses/expenses.module';
 import { CreditsModule } from './credits/credits.module';
+import { CreditCardsModule } from './credit-cards/credit-cards.module';
 import { RecurringModule } from './recurring/recurring.module';
 import { InvestmentsModule } from './investments/investments.module';
 import { BudgetsModule } from './budgets/budgets.module';
@@ -37,6 +38,7 @@ import { HealthController } from './health.controller';
     IncomesModule,
     ExpensesModule,
     CreditsModule,
+    CreditCardsModule,
     RecurringModule,
     InvestmentsModule,
     BudgetsModule,
