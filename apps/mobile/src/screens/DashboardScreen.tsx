@@ -1,10 +1,10 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import { Alert, Pressable, RefreshControl, ScrollView, Text, View } from 'react-native';
+import React, { useCallback, useState } from 'react';
+import { Pressable, RefreshControl, ScrollView, Text, View } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { api } from '../api/endpoints';
 import { AnalyticsSummary } from '../api/types';
 import { usePortfolios } from '../store/portfolio';
-import { Button, Card, Field, Money, ScreenTitle } from '../components/ui';
+import { Button, Card, Money, ScreenTitle } from '../components/ui';
 import { PortfolioPicker } from '../components/PortfolioPicker';
 import { colors, spacing } from '../theme';
 
@@ -14,9 +14,6 @@ export default function DashboardScreen({ navigation }: any) {
   const [forecast, setForecast] = useState<any>(null);
   const [clarifyCount, setClarifyCount] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
-  const [editingBalance, setEditingBalance] = useState(false);
-  const [balanceInput, setBalanceInput] = useState('');
-  const [savingBalance, setSavingBalance] = useState(false);
 
   const loadData = useCallback(async () => {
     if (!selectedId) return;
@@ -36,34 +33,10 @@ export default function DashboardScreen({ navigation }: any) {
 
   useFocusEffect(useCallback(() => { loadPortfolios().then(loadData); }, [loadData, loadPortfolios]));
 
-  useEffect(() => {
-    if (!editingBalance && summary?.currentBalance != null) setBalanceInput(String(summary.currentBalance));
-  }, [summary?.currentBalance, editingBalance]);
-
   const onRefresh = async () => {
     setRefreshing(true);
     await loadData();
     setRefreshing(false);
-  };
-
-  const saveCurrentBalance = async () => {
-    if (!selectedId) return;
-    const value = Number(balanceInput.replace(',', '.').replace(/\s/g, ''));
-    if (!Number.isFinite(value)) {
-      Alert.alert('Остаток', 'Введите сумму числом.');
-      return;
-    }
-    setSavingBalance(true);
-    try {
-      await api.updatePortfolio(selectedId, { currentBalance: value });
-      await loadPortfolios();
-      await loadData();
-      setEditingBalance(false);
-    } catch (e: any) {
-      Alert.alert('Ошибка', e.message ?? 'Не удалось сохранить остаток');
-    } finally {
-      setSavingBalance(false);
-    }
   };
 
   const actualBalance = summary?.availableNow ?? forecast?.actualToDate?.balance ?? summary?.balance ?? 0;
@@ -84,21 +57,8 @@ export default function DashboardScreen({ navigation }: any) {
         <Text style={labelStyle}>Доступная сумма сейчас</Text>
         <Money value={actualBalance} />
         <Text style={{ color: colors.textMuted, marginTop: 4, fontSize: 12 }}>
-          Остаток портфеля + доходы, которые уже должны были прийти, минус расходы, которые уже должны были списаться.
+          Считается автоматически: все доходы за всё время минус все расходы за всё время до сегодняшнего дня.
         </Text>
-        {editingBalance ? (
-          <View style={{ marginTop: spacing(1.25) }}>
-            <Field label="Текущий остаток на счетах" value={balanceInput} onChangeText={setBalanceInput} keyboardType="decimal-pad" placeholder="Например: 12500" />
-            <View style={{ flexDirection: 'row', gap: spacing(1) }}>
-              <View style={{ flex: 1 }}><Button title="Отмена" variant="ghost" onPress={() => setEditingBalance(false)} disabled={savingBalance} /></View>
-              <View style={{ flex: 1 }}><Button title="Сохранить" onPress={saveCurrentBalance} loading={savingBalance} /></View>
-            </View>
-          </View>
-        ) : (
-          <View style={{ marginTop: spacing(1.25) }}>
-            <Button title="Уточнить остаток" variant="ghost" onPress={() => setEditingBalance(true)} />
-          </View>
-        )}
       </Card>
 
       <Card style={{ marginTop: spacing(1.5) }}>
@@ -124,8 +84,8 @@ export default function DashboardScreen({ navigation }: any) {
 
       <View style={{ flexDirection: 'row', gap: spacing(1.5), marginTop: spacing(1.5) }}>
         <Card style={{ flex: 1 }}>
-          <Text style={labelStyle}>Остаток портфеля</Text>
-          <Money value={summary?.currentBalance ?? 0} />
+          <Text style={labelStyle}>Накопительный баланс</Text>
+          <Money value={summary?.availableNow ?? 0} />
         </Card>
         <Card style={{ flex: 1 }}>
           <Text style={labelStyle}>Обязательные платежи</Text>
