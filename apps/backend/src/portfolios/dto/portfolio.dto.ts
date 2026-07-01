@@ -3,6 +3,7 @@ import { AccessLevel, MemberRole, PortfolioType } from '@prisma/client';
 import {
   IsEnum,
   IsInt,
+  IsNumber,
   IsOptional,
   IsString,
   Min,
@@ -26,6 +27,11 @@ export class CreatePortfolioDto {
   @IsOptional()
   @IsString()
   description?: string;
+
+  @ApiPropertyOptional({ example: 12500, description: 'Текущий остаток денег в портфеле' })
+  @IsOptional()
+  @IsNumber()
+  currentBalance?: number;
 }
 
 export class UpdatePortfolioDto {
@@ -48,6 +54,11 @@ export class UpdatePortfolioDto {
   @IsOptional()
   @IsString()
   description?: string;
+
+  @ApiPropertyOptional({ example: 12500, description: 'Текущий остаток денег в портфеле' })
+  @IsOptional()
+  @IsNumber()
+  currentBalance?: number;
 }
 
 export class CreateInviteDto {
