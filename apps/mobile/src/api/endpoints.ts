@@ -46,8 +46,10 @@ export const api = {
 
   // Portfolios
   portfolios: () => request<Portfolio[]>('/portfolios'),
-  createPortfolio: (body: { name: string; type: string; currency?: string }) =>
+  createPortfolio: (body: { name: string; type: string; currency?: string; description?: string; currentBalance?: number }) =>
     request<Portfolio>('/portfolios', { method: 'POST', body }),
+  updatePortfolio: (portfolioId: string, body: Partial<{ name: string; type: string; currency: string; description: string; currentBalance: number }>) =>
+    request<Portfolio>(`/portfolios/${portfolioId}`, { method: 'PATCH', body }),
   createInvite: (portfolioId: string) =>
     request<{ url: string; token: string }>(`/portfolios/${portfolioId}/invite`, {
       method: 'POST',
