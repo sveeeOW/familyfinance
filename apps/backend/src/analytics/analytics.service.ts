@@ -165,8 +165,13 @@ export class AnalyticsService {
       const sameCategory = (item.categoryId ?? null) === (expense.categoryId ?? null);
       const expenseTitle = String(expense.title ?? expense.merchant ?? '').trim().toLowerCase();
       const itemTitle = String(item.title ?? '').trim().toLowerCase();
-      const sameTitle = !expenseTitle || !itemTitle || expenseTitle === itemTitle;
-      return sameAmount && sameDay && sameRecurrence && sameCategory && sameTitle;
+      const titleLooksSame = Boolean(expenseTitle && itemTitle && (expenseTitle === itemTitle || expenseTitle.includes(itemTitle) || itemTitle.includes(expenseTitle)));
+
+      if (!sameAmount || !sameDay || !sameRecurrence) return false;
+      // Если совпали сумма, день списания, периодичность и категория — это та же регулярка.
+      // Название может отличаться после ручного редактирования, поэтому не требуем совпадения title.
+      if (sameCategory) return true;
+      return titleLooksSame;
     });
   }
 
