@@ -80,6 +80,9 @@ export default function CreditCardsScreen() {
   const [scanError, setScanError] = useState<string | null>(null);
   const [scanDrafts, setScanDrafts] = useState<ImportDraft[]>([]);
   const [selectedDrafts, setSelectedDrafts] = useState<Record<string, boolean>>({});
+  const [cardFormOpen, setCardFormOpen] = useState(false);
+  const [chargeFormOpen, setChargeFormOpen] = useState(false);
+  const [paymentFormOpen, setPaymentFormOpen] = useState(false);
 
   useEffect(() => { loadPortfolios().catch(() => {}); }, [loadPortfolios]);
   useFocusEffect(useCallback(() => { loadCards().catch(() => {}); }, [portfolioId]));
@@ -103,7 +106,6 @@ export default function CreditCardsScreen() {
       if (!raw) return [];
       const local = JSON.parse(raw) as CardItem[];
       if (!Array.isArray(local) || !local.length) return [];
-      const migrated: CardItem[] = [];
       for (const card of local) {
         const created = await request<CardItem>('/credit-cards', {
           method: 'POST',
@@ -121,7 +123,6 @@ export default function CreditCardsScreen() {
             body: { amount: Number(payment.amount), paidAt: payment.paidAt },
           });
         }
-        migrated.push(created);
       }
       await AsyncStorage.setItem(`${STORAGE_KEY}.migrated`, 'true');
       return request<CardItem[]>(`/credit-cards?portfolioId=${targetPortfolioId}`);
@@ -173,6 +174,7 @@ export default function CreditCardsScreen() {
     setChargeTitle(charge.title);
     setChargeAmount(String(charge.amount));
     setChargeDate(charge.spentAt);
+    setChargeFormOpen(true);
   };
 
   const deleteCharge = async (chargeId: string) => {
@@ -294,16 +296,20 @@ export default function CreditCardsScreen() {
   };
 
   return (
-    <ScrollView style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ padding: spacing(2.5), paddingBottom: spacing(12) }}>
+    <ScrollView style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ padding: spacing(2.5), paddingBottom: spacing(18) }}>
       <ScreenTitle subtitle="Каждая покупка имеет свой беспроцентный таймер">Кредитные карты</ScreenTitle>
 
-      <Card>
-        <Text style={{ color: colors.text, fontFamily: appFont, fontSize: 18, fontWeight: '700', marginBottom: spacing(1) }}>Добавить карту</Text>
+      <CollapsibleCard
+        title="Добавить карту"
+        subtitle="Название, лимит и беспроцентный период"
+        open={cardFormOpen}
+        onToggle={() => setCardFormOpen((v) => !v)}
+      >
         <Field label="Название карты" value={cardName} onChangeText={setCardName} placeholder="Например: T-Банк Platinum" />
         <Field label="Лимит, ₽" value={limitAmount} onChangeText={setLimitAmount} keyboardType="decimal-pad" placeholder="340000" />
         <Field label="Беспроцентный период, дней" value={graceDays} onChangeText={setGraceDays} keyboardType="numeric" placeholder="120" />
         <Button title="Создать карту" onPress={createCard} disabled={!portfolioId || loading} />
-      </Card>
+      </CollapsibleCard>
 
       {loading ? <Card style={{ marginTop: spacing(1.5), alignItems: 'center' }}><ActivityIndicator color={colors.primary} /><Text style={{ color: colors.textMuted, marginTop: spacing(1) }}>Загружаю кредитки…</Text></Card> : null}
 
@@ -342,8 +348,12 @@ export default function CreditCardsScreen() {
           <Button title="Добавить выбранные в кредитку" onPress={addScannedCharges} loading={scanLoading} />
         </Card> : null}
 
-        <Card style={{ marginBottom: spacing(1.5) }}>
-          <Text style={{ color: colors.text, fontFamily: appFont, fontSize: 18, fontWeight: '700', marginBottom: spacing(1) }}>{editingChargeId ? 'Редактировать покупку' : 'Новая покупка'}</Text>
+        <CollapsibleCard
+          title={editingChargeId ? 'Редактировать покупку' : 'Новая покупка'}
+          subtitle="Ручное добавление покупки по выбранной кредитке"
+          open={chargeFormOpen}
+          onToggle={() => setChargeFormOpen((v) => !v)}
+        >
           <Field label="Описание" value={chargeTitle} onChangeText={setChargeTitle} placeholder="Покупка" />
           <Field label="Сумма, ₽" value={chargeAmount} onChangeText={setChargeAmount} keyboardType="decimal-pad" placeholder="50000" />
           <Field label="Дата покупки" value={chargeDate} onChangeText={setChargeDate} placeholder="2026-06-02" />
@@ -351,15 +361,19 @@ export default function CreditCardsScreen() {
             <Button title={editingChargeId ? 'Сохранить покупку' : 'Добавить покупку'} onPress={addOrUpdateCharge} />
             {editingChargeId ? <Button title="Отменить редактирование" variant="ghost" onPress={resetChargeForm} /> : null}
           </View>
-        </Card>
+        </CollapsibleCard>
 
-        <Card style={{ marginBottom: spacing(1.5) }}>
-          <Text style={{ color: colors.text, fontFamily: appFont, fontSize: 18, fontWeight: '700', marginBottom: spacing(1) }}>Внести платёж</Text>
+        <CollapsibleCard
+          title="Внести платёж"
+          subtitle="Погашение идёт в счёт самых ранних незакрытых покупок"
+          open={paymentFormOpen}
+          onToggle={() => setPaymentFormOpen((v) => !v)}
+        >
           <Field label="Сумма, ₽" value={paymentAmount} onChangeText={setPaymentAmount} keyboardType="decimal-pad" placeholder="40000" />
           <Field label="Дата платежа" value={paymentDate} onChangeText={setPaymentDate} placeholder="2026-06-25" />
           <Button title="Погасить по старым покупкам" onPress={addPayment} />
           <Text style={{ color: colors.textMuted, fontSize: 12, marginTop: spacing(1) }}>Платёж автоматически идёт в счёт самых ранних незакрытых покупок.</Text>
-        </Card>
+        </CollapsibleCard>
 
         <Text style={{ color: colors.textMuted, fontFamily: appFont, fontWeight: '700', marginBottom: spacing(1) }}>Открытые покупки</Text>
         {openCharges.length ? openCharges.map((charge) => <Card key={charge.id} style={{ marginBottom: spacing(1) }}>
@@ -374,6 +388,21 @@ export default function CreditCardsScreen() {
         </Card>) : <Text style={{ color: colors.textMuted }}>Открытых задолженностей нет.</Text>}
       </> : <Card style={{ marginTop: spacing(1.5) }}><Text style={{ color: colors.textMuted }}>Создайте кредитную карту, чтобы учитывать покупки и платежи.</Text></Card>}
     </ScrollView>
+  );
+}
+
+function CollapsibleCard({ title, subtitle, open, onToggle, children }: { title: string; subtitle?: string; open: boolean; onToggle: () => void; children: React.ReactNode }) {
+  return (
+    <Card style={{ marginBottom: spacing(1.5) }}>
+      <Pressable onPress={onToggle} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing(1) }}>
+        <View style={{ flex: 1 }}>
+          <Text style={{ color: colors.text, fontFamily: appFont, fontSize: 18, fontWeight: '700' }}>{title}</Text>
+          {subtitle ? <Text style={{ color: colors.textMuted, marginTop: 4, fontSize: 12 }}>{subtitle}</Text> : null}
+        </View>
+        <Text style={{ color: colors.primary, fontFamily: appFont, fontSize: 22, fontWeight: '800' }}>{open ? '−' : '+'}</Text>
+      </Pressable>
+      {open ? <View style={{ marginTop: spacing(1.5) }}>{children}</View> : null}
+    </Card>
   );
 }
 
