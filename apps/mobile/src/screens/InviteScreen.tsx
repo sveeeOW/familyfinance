@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Text, View } from 'react-native';
 import { request } from '../api/client';
 import { useAuth } from '../store/auth';
@@ -7,7 +7,12 @@ import { Button, Card, ScreenTitle } from '../components/ui';
 import { colors, spacing } from '../theme';
 
 export default function InviteScreen({ navigation, route }: any) {
-  const token = route?.params?.token;
+  const rawToken = route?.params?.token;
+  const token = useMemo(() => {
+    const value = typeof rawToken === 'string' ? rawToken.trim() : '';
+    if (!value || value === 'undefined' || value === 'null') return null;
+    return value;
+  }, [rawToken]);
   const status = useAuth((state) => state.status);
   const { load, select } = usePortfolios();
   const [busy, setBusy] = useState(false);
@@ -15,12 +20,18 @@ export default function InviteScreen({ navigation, route }: any) {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (status === 'authenticated' && token) {
+    if (status === 'loading') return;
+    if (!token) {
+      navigation.reset({ index: 0, routes: [{ name: status === 'authenticated' ? 'Tabs' : 'Login' }] });
+      return;
+    }
+    if (status === 'authenticated') {
       accept();
     }
   }, [status, token]);
 
   const accept = async () => {
+    if (!token) return;
     setBusy(true);
     setError(null);
     try {
