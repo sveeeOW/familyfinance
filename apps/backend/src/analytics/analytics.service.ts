@@ -179,6 +179,14 @@ export class AnalyticsService {
     }, 0);
   }
 
+  private postedIncomeToDate(incomes: any[], end: Date) {
+    return incomes.reduce((sum, income) => {
+      const paidDate = this.businessDayBeforeWeekend(income.date);
+      if (paidDate >= end) return sum;
+      return sum + Number(income.amount);
+    }, 0);
+  }
+
   private recurringForRange(items: any[], start: Date, end: Date) {
     return items.reduce((sum, item) => {
       const count = this.countOccurrences({
@@ -242,12 +250,6 @@ export class AnalyticsService {
     }
   }
 
-  private minDate(dates: Date[]) {
-    const valid = dates.filter((date) => date && !Number.isNaN(date.getTime()));
-    if (!valid.length) return new Date(new Date().getFullYear(), 0, 1);
-    return new Date(Math.min(...valid.map((date) => date.getTime())));
-  }
-
   async summary(portfolioId: string, userId: string) {
     await this.access.requireMember(portfolioId, userId);
     const { start, end } = this.monthBounds();
@@ -272,27 +274,9 @@ export class AnalyticsService {
       this.prisma.credit.findMany({ where: { portfolioId, status: CreditStatus.ACTIVE } }),
     ]);
 
-    const firstDate = this.minDate([
-      ...incomes.map((income) => income.date),
-      ...allExpensesToDate.map((expense) => expense.date),
-      ...recurring.map((item) => item.nextPaymentDate),
-      ...recurringExpenseMarkers.map((expense) => this.parseAnchorDate(expense.comment) ?? expense.date),
-      ...credits.map((credit) => credit.startDate ?? new Date(today.getFullYear(), today.getMonth(), credit.paymentDay)),
-    ]);
-    const allTimeStart = new Date(firstDate.getFullYear(), firstDate.getMonth(), 1);
-
     const scheduledIncome = this.incomeForRange(incomes, start, end);
-    const allTimeIncomeToDate = this.incomeForRange(incomes, allTimeStart, todayEnd);
+    const allTimeIncomeToDate = this.postedIncomeToDate(incomes, todayEnd);
     const allTimeActualExpense = allExpensesToDate.reduce((s, e) => s + Number(e.amount), 0);
-    const allTimeRecurringExpense = this.recurringForRange(recurring, allTimeStart, todayEnd)
-      + this.recurringExpensesFromExpenseComments(recurringExpenseMarkers, recurring, allTimeStart, todayEnd);
-    const allTimeCreditExpense = credits.reduce((sum, credit) => {
-      const paymentDay = credit.paymentDay;
-      const startDate = credit.startDate ?? new Date(allTimeStart.getFullYear(), allTimeStart.getMonth(), paymentDay);
-      const count = this.countOccurrences({ startDate, recurrence: Recurrence.MONTHLY, rangeStart: allTimeStart, rangeEnd: todayEnd, paymentDay });
-      return sum + Number(credit.monthlyPayment) * count;
-    }, 0);
-
     const actualExpense = expenses.reduce((s, e) => s + Number(e.amount), 0);
     const plannedExpense = this.recurringForRange(recurring, start, end) + this.recurringExpensesFromExpenseComments(recurringExpenseMarkers, recurring, start, end);
     const creditExpense = credits.reduce((s, c) => s + Number(c.monthlyPayment), 0);
@@ -300,7 +284,7 @@ export class AnalyticsService {
     const totalExpense = actualExpense + plannedExpense + creditExpense;
     const balance = totalIncome - totalExpense;
     const obligatory = plannedExpense + creditExpense;
-    const availableNow = allTimeIncomeToDate - allTimeActualExpense - allTimeRecurringExpense - allTimeCreditExpense;
+    const availableNow = allTimeIncomeToDate - allTimeActualExpense;
 
     const byCategoryMap = new Map<string, { id: string; name: string; color?: string; icon?: string; amount: number }>();
     for (const e of expenses) {
@@ -340,7 +324,7 @@ export class AnalyticsService {
       currentBalance: Math.round(availableNow),
       availableNow: Math.round(availableNow),
       allTimeIncome: Math.round(allTimeIncomeToDate),
-      allTimeExpense: Math.round(allTimeActualExpense + allTimeRecurringExpense + allTimeCreditExpense),
+      allTimeExpense: Math.round(allTimeActualExpense),
       obligatoryTotal: Math.round(obligatory),
       remainingObligatory: Math.round(remainingObligatory),
       freeMoney: Math.round(availableNow),
