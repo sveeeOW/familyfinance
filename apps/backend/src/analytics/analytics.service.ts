@@ -32,6 +32,14 @@ export class AnalyticsService {
     return this.dateInMonth(date.getFullYear(), date.getMonth() + months, date.getDate());
   }
 
+  private businessDayBeforeWeekend(date: Date) {
+    const next = this.startOfDay(date);
+    const day = next.getDay();
+    if (day === 6) next.setDate(next.getDate() - 1); // суббота → пятница
+    if (day === 0) next.setDate(next.getDate() - 2); // воскресенье → пятница
+    return next;
+  }
+
   private parseCustomPeriod(text?: string | null): { interval: number; unit: 'DAY' | 'WEEK' | 'MONTH' } | null {
     const tag = text?.split('[period:')[1]?.split(']')[0];
     if (!tag) return null;
@@ -83,14 +91,12 @@ export class AnalyticsService {
     let cursor = new Date(params.rangeStart.getFullYear(), params.rangeStart.getMonth(), 1);
     let count = 0;
     let guard = 0;
-
     while (cursor < params.rangeEnd && guard < 240) {
       const occurrence = this.dateInMonth(cursor.getFullYear(), cursor.getMonth(), params.paymentDay);
       if (occurrence >= params.rangeStart && occurrence < params.rangeEnd && occurrence >= firstDate) count += 1;
       cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1);
       guard += 1;
     }
-
     return count;
   }
 
@@ -104,22 +110,14 @@ export class AnalyticsService {
   }) {
     const { recurrence, rangeStart, rangeEnd, text, paymentDay } = params;
     const startDate = this.startOfDay(params.startDate);
-
-    if (recurrence === Recurrence.ONE_TIME) {
-      return startDate >= rangeStart && startDate < rangeEnd ? 1 : 0;
-    }
-
-    if (recurrence === Recurrence.MONTHLY && paymentDay) {
-      return this.countMonthlyByDay({ firstDate: startDate, paymentDay, rangeStart, rangeEnd });
-    }
-
+    if (recurrence === Recurrence.ONE_TIME) return startDate >= rangeStart && startDate < rangeEnd ? 1 : 0;
+    if (recurrence === Recurrence.MONTHLY && paymentDay) return this.countMonthlyByDay({ firstDate: startDate, paymentDay, rangeStart, rangeEnd });
     let current = new Date(startDate);
     let guard = 0;
     while (current < rangeStart && guard < 600) {
       current = this.addPeriod(current, recurrence, text);
       guard += 1;
     }
-
     let count = 0;
     while (current < rangeEnd && guard < 700) {
       if (current >= rangeStart) count += 1;
@@ -129,9 +127,49 @@ export class AnalyticsService {
     return count;
   }
 
+  private countIncomeOccurrences(params: {
+    startDate: Date;
+    recurrence: Recurrence;
+    rangeStart: Date;
+    rangeEnd: Date;
+    text?: string | null;
+    paymentDay?: number | null;
+  }) {
+    const { recurrence, rangeStart, rangeEnd, text, paymentDay } = params;
+    const firstDate = this.startOfDay(params.startDate);
+    if (recurrence === Recurrence.ONE_TIME) {
+      const paidDate = this.businessDayBeforeWeekend(firstDate);
+      return paidDate >= rangeStart && paidDate < rangeEnd ? 1 : 0;
+    }
+
+    let current: Date;
+    let count = 0;
+    let guard = 0;
+    if (recurrence === Recurrence.MONTHLY && paymentDay) {
+      current = new Date(rangeStart.getFullYear(), rangeStart.getMonth(), 1);
+      while (current < rangeEnd && guard < 240) {
+        const planned = this.dateInMonth(current.getFullYear(), current.getMonth(), paymentDay);
+        const paidDate = this.businessDayBeforeWeekend(planned);
+        if (planned >= firstDate && paidDate >= rangeStart && paidDate < rangeEnd) count += 1;
+        current = new Date(current.getFullYear(), current.getMonth() + 1, 1);
+        guard += 1;
+      }
+      return count;
+    }
+
+    current = new Date(firstDate);
+    while (current < rangeEnd && guard < 700) {
+      const paidDate = this.businessDayBeforeWeekend(current);
+      if (paidDate >= rangeStart && paidDate < rangeEnd) count += 1;
+      current = this.addPeriod(current, recurrence, text);
+      guard += 1;
+    }
+    return count;
+  }
+
   private incomeForRange(incomes: any[], start: Date, end: Date) {
     return incomes.reduce((sum, income) => {
-      const count = this.countOccurrences({
+      const count = this.countIncomeOccurrences({
         startDate: income.date,
         recurrence: income.recurrence,
         rangeStart: start,
@@ -166,10 +204,7 @@ export class AnalyticsService {
       const expenseTitle = String(expense.title ?? expense.merchant ?? '').trim().toLowerCase();
       const itemTitle = String(item.title ?? '').trim().toLowerCase();
       const titleLooksSame = Boolean(expenseTitle && itemTitle && (expenseTitle === itemTitle || expenseTitle.includes(itemTitle) || itemTitle.includes(expenseTitle)));
-
       if (!sameAmount || !sameDay || !sameRecurrence) return false;
-      // Если совпали сумма, день списания, периодичность и категория — это та же регулярка.
-      // Название может отличаться после ручного редактирования, поэтому не требуем совпадения title.
       if (sameCategory) return true;
       return titleLooksSame;
     });
@@ -179,19 +214,10 @@ export class AnalyticsService {
     return expenses.reduce((sum, expense) => {
       const recurrence = this.recurrenceFromComment(expense.comment);
       if (!recurrence) return sum;
-
       const anchor = this.parseAnchorDate(expense.comment) ?? expense.date;
       const paymentDay = anchor.getDate();
       if (this.hasMatchingRecurringPayment(expense, recurring, recurrence, paymentDay)) return sum;
-
-      const count = this.countOccurrences({
-        startDate: anchor,
-        recurrence,
-        rangeStart: start,
-        rangeEnd: end,
-        text: expense.comment,
-        paymentDay,
-      });
+      const count = this.countOccurrences({ startDate: anchor, recurrence, rangeStart: start, rangeEnd: end, text: expense.comment, paymentDay });
       return sum + Number(expense.amount) * count;
     }, 0);
   }
@@ -209,14 +235,7 @@ export class AnalyticsService {
       const anchor = this.parseAnchorDate(expense.comment) ?? expense.date;
       const paymentDay = anchor.getDate();
       if (this.hasMatchingRecurringPayment(expense, recurring, recurrence, paymentDay)) continue;
-      const count = this.countOccurrences({
-        startDate: anchor,
-        recurrence,
-        rangeStart: start,
-        rangeEnd: end,
-        text: expense.comment,
-        paymentDay,
-      });
+      const count = this.countOccurrences({ startDate: anchor, recurrence, rangeStart: start, rangeEnd: end, text: expense.comment, paymentDay });
       if (!count) continue;
       const key = expense.category?.id ?? `expense-recurring-${expense.id}`;
       const name = expense.category?.name ?? expense.title ?? expense.merchant ?? 'Регулярный расход';
@@ -233,9 +252,13 @@ export class AnalyticsService {
 
   async summary(portfolioId: string, userId: string) {
     await this.access.requireMember(portfolioId, userId);
+    await this.prisma.$executeRawUnsafe('ALTER TABLE portfolios ADD COLUMN IF NOT EXISTS current_balance numeric(18,2) NOT NULL DEFAULT 0;');
     const { start, end } = this.monthBounds();
+    const today = new Date();
+    const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
 
-    const [incomes, expenses, recurringExpenseMarkers, recurring, credits] = await Promise.all([
+    const [portfolio, incomes, expenses, recurringExpenseMarkers, recurring, credits] = await Promise.all([
+      this.prisma.portfolio.findUnique({ where: { id: portfolioId } }) as any,
       this.prisma.income.findMany({ where: { portfolioId } }),
       this.prisma.expense.findMany({
         where: { portfolioId, status: ExpenseStatus.CONFIRMED, date: { gte: start, lt: end } },
@@ -252,77 +275,46 @@ export class AnalyticsService {
       this.prisma.credit.findMany({ where: { portfolioId, status: CreditStatus.ACTIVE } }),
     ]);
 
+    const currentBalance = Number(portfolio?.currentBalance ?? 0);
     const scheduledIncome = this.incomeForRange(incomes, start, end);
+    const actualIncomeToDate = this.incomeForRange(incomes, start, todayStart);
     const actualExpense = expenses.reduce((s, e) => s + Number(e.amount), 0);
-    const plannedExpense = this.recurringForRange(recurring, start, end)
-      + this.recurringExpensesFromExpenseComments(recurringExpenseMarkers, recurring, start, end);
+    const actualExpenseToDate = expenses.filter((e) => e.date < todayStart).reduce((s, e) => s + Number(e.amount), 0);
+    const plannedExpense = this.recurringForRange(recurring, start, end) + this.recurringExpensesFromExpenseComments(recurringExpenseMarkers, recurring, start, end);
     const creditExpense = credits.reduce((s, c) => s + Number(c.monthlyPayment), 0);
     const totalIncome = scheduledIncome;
     const totalExpense = actualExpense + plannedExpense + creditExpense;
     const balance = totalIncome - totalExpense;
     const obligatory = plannedExpense + creditExpense;
+    const availableNow = currentBalance + actualIncomeToDate - actualExpenseToDate;
 
     const byCategoryMap = new Map<string, { id: string; name: string; color?: string; icon?: string; amount: number }>();
     for (const e of expenses) {
       const key = e.category?.id ?? 'none';
       const name = e.category?.name ?? 'Без категории';
       const prev = byCategoryMap.get(key);
-      byCategoryMap.set(key, {
-        id: key,
-        name,
-        color: e.category?.color ?? undefined,
-        icon: e.category?.icon ?? undefined,
-        amount: (prev?.amount ?? 0) + Number(e.amount),
-      });
+      byCategoryMap.set(key, { id: key, name, color: e.category?.color ?? undefined, icon: e.category?.icon ?? undefined, amount: (prev?.amount ?? 0) + Number(e.amount) });
     }
     for (const r of recurring) {
-      const count = this.countOccurrences({
-        startDate: r.nextPaymentDate,
-        recurrence: r.recurrence,
-        rangeStart: start,
-        rangeEnd: end,
-        text: r.comment,
-        paymentDay: r.paymentDay,
-      });
+      const count = this.countOccurrences({ startDate: r.nextPaymentDate, recurrence: r.recurrence, rangeStart: start, rangeEnd: end, text: r.comment, paymentDay: r.paymentDay });
       if (!count) continue;
       const key = r.category?.id ?? `recurring-${r.id}`;
       const name = r.category?.name ?? r.title;
       const prev = byCategoryMap.get(key);
-      byCategoryMap.set(key, {
-        id: key,
-        name,
-        color: r.category?.color ?? undefined,
-        icon: r.category?.icon ?? undefined,
-        amount: (prev?.amount ?? 0) + Number(r.amount) * count,
-      });
+      byCategoryMap.set(key, { id: key, name, color: r.category?.color ?? undefined, icon: r.category?.icon ?? undefined, amount: (prev?.amount ?? 0) + Number(r.amount) * count });
     }
     this.addRecurringExpenseCommentsToCategories(byCategoryMap, recurringExpenseMarkers, recurring, start, end);
     const byCategory = [...byCategoryMap.values()].sort((a, b) => b.amount - a.amount);
 
     const byMemberMap = new Map<string, number>();
-    for (const e of expenses) {
-      byMemberMap.set(e.paidByUserId, (byMemberMap.get(e.paidByUserId) ?? 0) + Number(e.amount));
-    }
-    const memberUsers = await this.prisma.user.findMany({
-      where: { id: { in: [...byMemberMap.keys()] } },
-      select: { id: true, name: true },
-    });
-    const byMember = memberUsers.map((u) => ({
-      userId: u.id,
-      name: u.name,
-      amount: byMemberMap.get(u.id) ?? 0,
-    }));
-
+    for (const e of expenses) byMemberMap.set(e.paidByUserId, (byMemberMap.get(e.paidByUserId) ?? 0) + Number(e.amount));
+    const memberUsers = await this.prisma.user.findMany({ where: { id: { in: [...byMemberMap.keys()] } }, select: { id: true, name: true } });
+    const byMember = memberUsers.map((u) => ({ userId: u.id, name: u.name, amount: byMemberMap.get(u.id) ?? 0 }));
     const personal = expenses.filter((e) => e.scope === ExpenseScope.PERSONAL).reduce((s, e) => s + Number(e.amount), 0);
     const shared = totalExpense - personal;
-
-    const today = new Date();
-    const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-    const remainingRecurring = this.recurringForRange(recurring, todayStart, end)
-      + this.recurringExpensesFromExpenseComments(recurringExpenseMarkers, recurring, todayStart, end);
+    const remainingRecurring = this.recurringForRange(recurring, todayStart, end) + this.recurringExpensesFromExpenseComments(recurringExpenseMarkers, recurring, todayStart, end);
     const remainingCredits = credits.filter((c) => c.paymentDay >= today.getDate()).reduce((s, c) => s + Number(c.monthlyPayment), 0);
     const remainingObligatory = remainingRecurring + remainingCredits;
-    const freeMoney = balance - remainingObligatory;
 
     return {
       period: { from: start, to: end },
@@ -331,9 +323,11 @@ export class AnalyticsService {
       actualExpense: Math.round(actualExpense),
       plannedExpense: Math.round(plannedExpense + creditExpense),
       balance: Math.round(balance),
+      currentBalance: Math.round(currentBalance),
+      availableNow: Math.round(availableNow),
       obligatoryTotal: Math.round(obligatory),
       remainingObligatory: Math.round(remainingObligatory),
-      freeMoney: Math.round(freeMoney),
+      freeMoney: Math.round(availableNow),
       personalExpense: Math.round(personal),
       sharedExpense: Math.round(shared),
       byCategory: byCategory.map((c) => ({ ...c, amount: Math.round(c.amount) })),
@@ -345,7 +339,6 @@ export class AnalyticsService {
     await this.access.requireMember(portfolioId, userId);
     const now = new Date();
     const from = new Date(now.getFullYear(), now.getMonth() - (months - 1), 1);
-
     const [incomes, expenses, recurringExpenseMarkers, recurring, credits] = await Promise.all([
       this.prisma.income.findMany({ where: { portfolioId } }),
       this.prisma.expense.findMany({ where: { portfolioId, status: ExpenseStatus.CONFIRMED, date: { gte: from } } }),
@@ -353,29 +346,16 @@ export class AnalyticsService {
       this.prisma.recurringPayment.findMany({ where: { portfolioId, status: CreditStatus.ACTIVE } }),
       this.prisma.credit.findMany({ where: { portfolioId, status: CreditStatus.ACTIVE } }),
     ]);
-
     const buckets: Record<string, { month: string; income: number; expense: number }> = {};
     for (let i = 0; i < months; i++) {
       const d = new Date(now.getFullYear(), now.getMonth() - (months - 1) + i, 1);
       const next = new Date(d.getFullYear(), d.getMonth() + 1, 1);
       const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-      buckets[key] = {
-        month: key,
-        income: this.incomeForRange(incomes, d, next),
-        expense: this.recurringForRange(recurring, d, next)
-          + this.recurringExpensesFromExpenseComments(recurringExpenseMarkers, recurring, d, next)
-          + credits.reduce((s, c) => s + Number(c.monthlyPayment), 0),
-      };
+      buckets[key] = { month: key, income: this.incomeForRange(incomes, d, next), expense: this.recurringForRange(recurring, d, next) + this.recurringExpensesFromExpenseComments(recurringExpenseMarkers, recurring, d, next) + credits.reduce((s, c) => s + Number(c.monthlyPayment), 0) };
     }
     const keyOf = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
     for (const e of expenses) if (buckets[keyOf(e.date)]) buckets[keyOf(e.date)].expense += Number(e.amount);
-
-    return Object.values(buckets).map((b) => ({
-      month: b.month,
-      income: Math.round(b.income),
-      expense: Math.round(b.expense),
-      balance: Math.round(b.income - b.expense),
-    }));
+    return Object.values(buckets).map((b) => ({ month: b.month, income: Math.round(b.income), expense: Math.round(b.expense), balance: Math.round(b.income - b.expense) }));
   }
 
   async categories(portfolioId: string, userId: string) {
@@ -387,81 +367,46 @@ export class AnalyticsService {
     await this.access.requireMember(portfolioId, userId);
     const { start, end } = this.monthBounds();
     const now = new Date();
-    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
     const [incomes, recurringExpenseMarkers, recurring, credits, currentMonthExpenses, variableExpenses] = await Promise.all([
       this.prisma.income.findMany({ where: { portfolioId } }),
       this.prisma.expense.findMany({ where: { portfolioId, status: ExpenseStatus.CONFIRMED, comment: { contains: 'Период:' } } }),
       this.prisma.recurringPayment.findMany({ where: { portfolioId, status: CreditStatus.ACTIVE } }),
       this.prisma.credit.findMany({ where: { portfolioId, status: CreditStatus.ACTIVE } }),
       this.prisma.expense.findMany({ where: { portfolioId, status: ExpenseStatus.CONFIRMED, date: { gte: start, lt: end } } }),
-      this.prisma.expense.findMany({
-        where: {
-          portfolioId,
-          status: ExpenseStatus.CONFIRMED,
-          date: { gte: new Date(start.getFullYear(), start.getMonth() - 3, 1), lt: start },
-        },
-      }),
+      this.prisma.expense.findMany({ where: { portfolioId, status: ExpenseStatus.CONFIRMED, date: { gte: new Date(start.getFullYear(), start.getMonth() - 3, 1), lt: start } } }),
     ]);
-
     const creditMonthly = credits.reduce((s, c) => s + Number(c.monthlyPayment), 0);
     const remainingCredits = credits.filter((c) => c.paymentDay >= now.getDate()).reduce((s, c) => s + Number(c.monthlyPayment), 0);
-
-    const actualExpenseToDate = currentMonthExpenses
-      .filter((e) => e.date < todayStart)
-      .reduce((s, e) => s + Number(e.amount), 0);
-    const futureOneOffExpense = currentMonthExpenses
-      .filter((e) => e.date >= todayStart)
-      .reduce((s, e) => s + Number(e.amount), 0);
-
+    const actualExpenseToDate = currentMonthExpenses.filter((e) => e.date < todayStart).reduce((s, e) => s + Number(e.amount), 0);
+    const futureOneOffExpense = currentMonthExpenses.filter((e) => e.date >= todayStart).reduce((s, e) => s + Number(e.amount), 0);
     const actualIncomeToDate = this.incomeForRange(incomes, start, todayStart);
     const restIncome = this.incomeForRange(incomes, todayStart, end);
-    const restRecurring = this.recurringForRange(recurring, todayStart, end)
-      + this.recurringExpensesFromExpenseComments(recurringExpenseMarkers, recurring, todayStart, end);
+    const restRecurring = this.recurringForRange(recurring, todayStart, end) + this.recurringExpensesFromExpenseComments(recurringExpenseMarkers, recurring, todayStart, end);
     const restExpense = restRecurring + remainingCredits + futureOneOffExpense;
     const actualBalance = actualIncomeToDate - actualExpenseToDate;
     const endOfMonthBalance = actualBalance + restIncome - restExpense;
-
     let expectedIncome = 0;
     let obligatory = 0;
     for (let i = 0; i < 6; i++) {
       const d = new Date(start.getFullYear(), start.getMonth() + i, 1);
       const next = new Date(d.getFullYear(), d.getMonth() + 1, 1);
       expectedIncome += this.incomeForRange(incomes, d, next);
-      obligatory += this.recurringForRange(recurring, d, next)
-        + this.recurringExpensesFromExpenseComments(recurringExpenseMarkers, recurring, d, next)
-        + creditMonthly;
+      obligatory += this.recurringForRange(recurring, d, next) + this.recurringExpensesFromExpenseComments(recurringExpenseMarkers, recurring, d, next) + creditMonthly;
     }
     expectedIncome = expectedIncome / 6;
     obligatory = obligatory / 6;
-
     const avgVariable = variableExpenses.reduce((s, e) => s + Number(e.amount), 0) / 3;
     const monthlyForecast = expectedIncome - obligatory - avgVariable;
     const horizon = (m: number) => Math.round(monthlyForecast * m);
-
     return {
-      actualToDate: {
-        income: Math.round(actualIncomeToDate),
-        expense: Math.round(actualExpenseToDate),
-        balance: Math.round(actualBalance),
-      },
-      restOfMonth: {
-        income: Math.round(restIncome),
-        expense: Math.round(restExpense),
-        recurring: Math.round(restRecurring),
-        credits: Math.round(remainingCredits),
-        oneOff: Math.round(futureOneOffExpense),
-      },
+      actualToDate: { income: Math.round(actualIncomeToDate), expense: Math.round(actualExpenseToDate), balance: Math.round(actualBalance) },
+      restOfMonth: { income: Math.round(restIncome), expense: Math.round(restExpense), recurring: Math.round(restRecurring), credits: Math.round(remainingCredits), oneOff: Math.round(futureOneOffExpense) },
       expectedIncome: Math.round(expectedIncome),
       obligatory: Math.round(obligatory),
       avgVariableExpense: Math.round(avgVariable),
       endOfMonthBalance: Math.round(endOfMonthBalance),
-      forecast: {
-        currentMonth: Math.round(monthlyForecast),
-        in3Months: horizon(3),
-        in6Months: horizon(6),
-        in12Months: horizon(12),
-      },
+      forecast: { currentMonth: Math.round(monthlyForecast), in3Months: horizon(3), in6Months: horizon(6), in12Months: horizon(12) },
     };
   }
 
@@ -474,16 +419,7 @@ export class AnalyticsService {
       totalRemaining: Math.round(totalRemaining),
       monthlyLoad: Math.round(monthlyLoad),
       count: credits.length,
-      credits: credits.map((c) => {
-        const monthsLeft = Number(c.monthlyPayment) > 0 ? Math.ceil(Number(c.remainingAmount) / Number(c.monthlyPayment)) : 0;
-        return {
-          id: c.id,
-          title: c.title,
-          remaining: Math.round(Number(c.remainingAmount)),
-          monthlyPayment: Math.round(Number(c.monthlyPayment)),
-          monthsLeft,
-        };
-      }),
+      credits: credits.map((c) => ({ id: c.id, title: c.title, remaining: Math.round(Number(c.remainingAmount)), monthlyPayment: Math.round(Number(c.monthlyPayment)), monthsLeft: Number(c.monthlyPayment) > 0 ? Math.ceil(Number(c.remainingAmount) / Number(c.monthlyPayment)) : 0 })),
     };
   }
 }
