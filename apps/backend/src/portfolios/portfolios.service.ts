@@ -19,6 +19,8 @@ import {
 
 @Injectable()
 export class PortfoliosService {
+  private currentBalanceReady?: Promise<void>;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly access: PortfolioAccessService,
@@ -26,7 +28,18 @@ export class PortfoliosService {
     private readonly notifications: NotificationsService,
   ) {}
 
+  private ensureCurrentBalanceColumn() {
+    if (!this.currentBalanceReady) {
+      this.currentBalanceReady = this.prisma.$executeRawUnsafe(`
+        ALTER TABLE portfolios
+        ADD COLUMN IF NOT EXISTS current_balance numeric(18,2) NOT NULL DEFAULT 0;
+      `).then(() => undefined);
+    }
+    return this.currentBalanceReady;
+  }
+
   async create(userId: string, dto: CreatePortfolioDto) {
+    await this.ensureCurrentBalanceColumn();
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     const portfolio = await this.prisma.portfolio.create({
       data: {
@@ -35,16 +48,18 @@ export class PortfoliosService {
         currency: dto.currency ?? user?.defaultCurrency ?? 'RUB',
         description: dto.description,
         ownerUserId: userId,
+        ...(dto.currentBalance != null ? { currentBalance: dto.currentBalance } as any : {}),
         members: {
           create: { userId, role: MemberRole.OWNER, accessLevel: 'FULL', status: 'ACTIVE' },
         },
-      },
+      } as any,
     });
     await this.categories.ensurePortfolioCategories(portfolio.id);
     return portfolio;
   }
 
   async list(userId: string) {
+    await this.ensureCurrentBalanceColumn();
     return this.prisma.portfolio.findMany({
       where: { members: { some: { userId, status: MemberStatus.ACTIVE } } },
       include: {
@@ -56,6 +71,7 @@ export class PortfoliosService {
   }
 
   async get(id: string, userId: string) {
+    await this.ensureCurrentBalanceColumn();
     await this.access.requireMember(id, userId);
     return this.prisma.portfolio.findUnique({
       where: { id },
@@ -66,11 +82,13 @@ export class PortfoliosService {
   }
 
   async update(id: string, userId: string, dto: UpdatePortfolioDto) {
+    await this.ensureCurrentBalanceColumn();
     await this.access.require(id, userId, 'manage');
-    return this.prisma.portfolio.update({ where: { id }, data: dto });
+    return this.prisma.portfolio.update({ where: { id }, data: dto as any });
   }
 
   async remove(id: string, userId: string) {
+    await this.ensureCurrentBalanceColumn();
     const { member, portfolio } = await this.access.requireMember(id, userId);
     if (member.role !== MemberRole.OWNER) throw new ForbiddenException('Удалить портфель может только владелец');
     if (portfolio.isDefault) throw new BadRequestException('Нельзя удалить личный портфель по умолчанию');
