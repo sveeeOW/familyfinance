@@ -54,6 +54,7 @@ function MainTabs() {
   return (
     <Tab.Navigator screenOptions={({ route }) => ({
       headerShown: false,
+      sceneContainerStyle: { backgroundColor: colors.bg, paddingBottom: spacing(12) },
       tabBarStyle: { position: 'absolute', left: spacing(2), right: spacing(2), bottom: spacing(1.5), height: 84, backgroundColor: colors.card, borderTopWidth: 0, borderRadius: radius.xl, paddingTop: spacing(0.85), paddingBottom: spacing(1), paddingHorizontal: spacing(0.4), ...shadows.card },
       tabBarItemStyle: { borderRadius: radius.lg, marginHorizontal: 1 },
       tabBarLabelStyle: { fontWeight: '500', fontSize: 9, marginTop: 1 },
