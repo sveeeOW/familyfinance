@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Alert, Pressable, ScrollView, Text, View } from 'react-native';
+import { Pressable, ScrollView, Text, View } from 'react-native';
 import { api } from '../api/endpoints';
 import { request } from '../api/client';
 import { usePortfolios } from '../store/portfolio';
@@ -151,30 +151,22 @@ export default function AddIncomeScreen({ navigation, route }: any) {
     }
   };
 
-  const removeIncome = () => {
-    if (!income?.id) return;
-    Alert.alert('Удалить доход?', 'Запись будет удалена из портфеля.', [
-      { text: 'Отмена', style: 'cancel' },
-      {
-        text: 'Удалить',
-        style: 'destructive',
-        onPress: async () => {
-          setBusy(true);
-          try {
-            await request(`/incomes/${income.id}`, { method: 'DELETE' });
-            navigation.goBack();
-          } catch (e: any) {
-            setError(e.message ?? 'Не удалось удалить');
-          } finally {
-            setBusy(false);
-          }
-        },
-      },
-    ]);
+  const removeIncome = async () => {
+    if (!income?.id || busy) return;
+    setError(null);
+    setBusy(true);
+    try {
+      await request(`/incomes/${income.id}`, { method: 'DELETE' });
+      navigation.goBack();
+    } catch (e: any) {
+      setError(e.message ?? 'Не удалось удалить доход');
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
-    <ScrollView style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ padding: spacing(2.5) }}>
+    <ScrollView style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ padding: spacing(2.5), paddingBottom: spacing(8) }}>
       <ScreenTitle>{isEditing ? 'Редактировать доход' : 'Новый доход'}</ScreenTitle>
       <Field label="Сумма, ₽" keyboardType="decimal-pad" value={amount} onChangeText={setAmount} placeholder="225000" />
       <Field label="Ближайшая выплата" value={nearestPayout} onChangeText={setNearestPayout} placeholder="2026-07-05" />
@@ -211,7 +203,7 @@ export default function AddIncomeScreen({ navigation, route }: any) {
       {error ? <Text style={{ color: colors.expense, marginVertical: spacing(1) }}>{error}</Text> : null}
       <View style={{ marginTop: spacing(2), gap: spacing(1) }}>
         <Button title={isEditing ? 'Сохранить изменения' : 'Сохранить доход'} onPress={submit} loading={busy} />
-        {isEditing ? <Button title="Удалить доход" onPress={removeIncome} variant="danger" disabled={busy} /> : null}
+        {isEditing ? <Button title="Удалить доход" onPress={removeIncome} variant="danger" loading={busy} /> : null}
       </View>
     </ScrollView>
   );
