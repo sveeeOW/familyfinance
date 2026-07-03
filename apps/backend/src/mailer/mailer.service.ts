@@ -28,20 +28,26 @@ export class MailerService implements OnModuleInit {
     }
   }
 
+  isConfigured() {
+    return Boolean(this.transport);
+  }
+
   async send(to: string, subject: string, text: string, html?: string) {
     if (!this.transport) {
       this.logger.log(`[EMAIL → ${to}] ${subject}\n${text}`);
-      return;
+      return { delivered: false, mode: 'console' };
     }
     try {
       await this.transport.sendMail({ from: this.from, to, subject, text, html });
+      return { delivered: true, mode: 'smtp' };
     } catch (e) {
       this.logger.error(`Не удалось отправить письмо на ${to}: ${(e as Error).message}`);
+      return { delivered: false, mode: 'error', error: (e as Error).message };
     }
   }
 
   async sendPasswordResetCode(to: string, code: string) {
-    await this.send(
+    return this.send(
       to,
       'Восстановление пароля — Family Finance',
       `Ваш код для восстановления пароля: ${code}\nКод действует 15 минут. Если вы не запрашивали восстановление, проигнорируйте письмо.`,
@@ -50,7 +56,7 @@ export class MailerService implements OnModuleInit {
   }
 
   async sendInvitation(to: string, inviterName: string, url: string) {
-    await this.send(
+    return this.send(
       to,
       `${inviterName} приглашает вас в Family Finance`,
       `${inviterName} пригласил вас в общий финансовый портфель. Перейдите по ссылке, чтобы присоединиться: ${url}`,
