@@ -145,7 +145,7 @@ export class TelegramService implements OnModuleInit, OnApplicationShutdown {
     try {
       const buffer = await this.downloadTelegramFile(ctx, doc.file_id);
       const drafts = await this.ai.recognizePdfStatement({ buffer, filename, userId: user.id, portfolioId });
-      if (!drafts.length) return ctx.reply('Не нашёл явных расходов в PDF.');
+      if (!drafts.length) return ctx.reply('Не нашёл явных операций в PDF.');
       await ctx.reply(`Нашёл операций: ${drafts.length}. Отправляю их на подтверждение по одной.`);
       for (const draft of drafts) await this.presentDraft(ctx, draft);
     } catch (e) {
@@ -186,19 +186,16 @@ export class TelegramService implements OnModuleInit, OnApplicationShutdown {
     const logId = draft.logId;
     const shortLogId = this.encodeId(logId);
     const rows: any[] = [];
+    const expenseButton = Markup.button.callback(draft.duplicateOf ? '✅ В портфель, всё равно' : '✅ Платёж в портфель', draft.duplicateOf ? `force:${logId}` : `confirm:${logId}`);
+    const incomeButton = Markup.button.callback(p.type === 'income' ? '💰 Добавить как доход' : '💰 Учесть как доход', `income:${logId}`);
+
     if (p.type === 'income') {
-      rows.push([Markup.button.callback('💰 Добавить как доход', `income:${logId}`)]);
-      rows.push([Markup.button.callback('✅ Платёж в портфель', draft.duplicateOf ? `force:${logId}` : `confirm:${logId}`)]);
-    } else if (p.type === 'transfer' || p.type === 'unknown') {
-      rows.push([
-        Markup.button.callback('✅ Платёж в портфель', draft.duplicateOf ? `force:${logId}` : `confirm:${logId}`),
-        Markup.button.callback('💰 Доход', `income:${logId}`),
-      ]);
-      rows.push([Markup.button.callback('💳 В раздел кредитки', `cc:${shortLogId}`)]);
-      rows.push([Markup.button.callback('⏭ Пропустить', `skip:${logId}`)]);
+      rows.push([incomeButton]);
+      rows.push([expenseButton]);
     } else {
-      rows.push([Markup.button.callback(draft.duplicateOf ? '✅ В портфель, всё равно' : '✅ Платёж в портфель', draft.duplicateOf ? `force:${logId}` : `confirm:${logId}`)]);
+      rows.push([expenseButton, incomeButton]);
       rows.push([Markup.button.callback('💳 В раздел кредитки', `cc:${shortLogId}`)]);
+      if (p.type === 'transfer' || p.type === 'unknown') rows.push([Markup.button.callback('⏭ Пропустить', `skip:${logId}`)]);
     }
     rows.push([Markup.button.callback('🏷 Изменить категорию', `pc:${shortLogId}`)]);
     rows.push([Markup.button.callback('📁 Изменить портфель', `pp:${shortLogId}`)]);
