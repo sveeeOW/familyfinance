@@ -1,12 +1,10 @@
-import { Body, Controller, Post, UseGuards, Req } from '@nestjs/common';
+import { Body, Controller, Post, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { AuthService } from './auth.service';
 import {
-  ForgotPasswordDto,
   LoginDto,
   RefreshDto,
   RegisterDto,
-  ResetPasswordDto,
 } from './dto/auth.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -36,15 +34,5 @@ export class AuthController {
   @Post('logout')
   logout(@CurrentUser('userId') userId: string, @Body() dto: RefreshDto) {
     return this.auth.logout(userId, dto?.refreshToken);
-  }
-
-  @Post('forgot-password')
-  forgot(@Body() dto: ForgotPasswordDto) {
-    return this.auth.forgotPassword(dto);
-  }
-
-  @Post('reset-password')
-  reset(@Body() dto: ResetPasswordDto) {
-    return this.auth.resetPassword(dto);
   }
 }
