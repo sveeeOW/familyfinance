@@ -81,7 +81,7 @@ export class AiService {
     const categories = await this.categoryNames(params.portfolioId);
     const history = await this.merchantHistory(params.userId, params.portfolioId);
     const parsed = await this.parser.parseText({ text: params.text, availableCategories: categories, previousMerchantCategories: history });
-    return this.postProcess(parsed, { ...params, source: ExpenseSource.TELEGRAM_BOT, fileUrl: null });
+    return this.postProcess(this.applySignHeuristic(parsed), { ...params, source: ExpenseSource.TELEGRAM_BOT, fileUrl: null });
   }
 
   async recognizeImage(params: { buffer: Buffer; mimeType: string; userId: string; portfolioId: string; source?: ExpenseSource }): Promise<RecognitionDraft> {
@@ -97,7 +97,7 @@ export class AiService {
     const categories = await this.categoryNames(params.portfolioId);
     const history = await this.merchantHistory(params.userId, params.portfolioId);
     const parsed = await this.parser.parseImage({ imageBase64: params.buffer.toString('base64'), mimeType: params.mimeType, availableCategories: categories, previousMerchantCategories: history });
-    return this.postProcess(parsed, { userId: params.userId, portfolioId: params.portfolioId, source: params.source ?? ExpenseSource.TELEGRAM_BOT, fileUrl: screenshotUrl });
+    return this.postProcess(this.applySignHeuristic(parsed), { userId: params.userId, portfolioId: params.portfolioId, source: params.source ?? ExpenseSource.TELEGRAM_BOT, fileUrl: screenshotUrl });
   }
 
   async importOperations(params: { userId: string; portfolioId: string; fileBase64?: string; mimeType?: string; filename?: string; text?: string }): Promise<ImportOperationDraft[]> {
@@ -136,10 +136,11 @@ export class AiService {
     }
 
     const result: ImportOperationDraft[] = [];
-    for (const operation of operations.filter((item) => item.amount || item.description || item.merchant).slice(0, 30)) {
+    for (const rawOperation of operations.filter((item) => item.amount || item.description || item.merchant).slice(0, 30)) {
+      const operation = this.applySignHeuristic(rawOperation);
       const draft = await this.postProcess(operation, { userId: params.userId, portfolioId: params.portfolioId, source: ExpenseSource.IMPORT, fileUrl: temporaryFileUrl });
       const operationType = this.normalizeOperationType(operation.type);
-      result.push({ ...draft, operationType, suggestedAction: operationType === 'income' ? 'income' : operationType === 'expense' ? 'expense' : 'skip' });
+      result.push({ ...draft, operationType, suggestedAction: operationType === 'income' ? 'income' : 'expense' });
     }
     return result;
   }
@@ -160,7 +161,8 @@ export class AiService {
     const history = await this.merchantHistory(params.userId, params.portfolioId);
     const parsed = await this.parser.parsePdfStatement({ fileBase64: params.buffer.toString('base64'), filename: params.filename, availableCategories: categories, previousMerchantCategories: history });
     const drafts: RecognitionDraft[] = [];
-    for (const operation of parsed.filter((item) => item.type !== 'income' && item.amount).slice(0, 20)) {
+    for (const rawOperation of parsed.filter((item) => item.amount).slice(0, 20)) {
+      const operation = this.applySignHeuristic(rawOperation);
       drafts.push(await this.postProcess(operation, { userId: params.userId, portfolioId: params.portfolioId, source: ExpenseSource.TELEGRAM_BOT, fileUrl: temporaryFileUrl }));
     }
     return drafts;
@@ -334,6 +336,36 @@ export class AiService {
 
   private normalizeOperationType(value: ParsedOperationType | undefined): ParsedOperationType {
     return value === 'income' || value === 'transfer' || value === 'unknown' ? value : 'expense';
+  }
+
+  private applySignHeuristic(parsed: ParsedReceipt): ParsedReceipt {
+    const sign = this.detectSignedAmount(parsed);
+    if (!sign) return { ...parsed, type: this.normalizeOperationType(parsed.type) === 'unknown' ? 'expense' : this.normalizeOperationType(parsed.type) };
+    return {
+      ...parsed,
+      type: sign,
+      confidence: Math.max(parsed.confidence ?? 0, 85),
+      needsClarification: parsed.amount ? false : parsed.needsClarification,
+    };
+  }
+
+  private detectSignedAmount(parsed: ParsedReceipt): 'income' | 'expense' | null {
+    const text = [parsed.extractedText, parsed.description, parsed.merchant].filter(Boolean).join('\n');
+    if (!text.trim()) return null;
+
+    const amountDigits = parsed.amount ? String(Math.round(Math.abs(parsed.amount))).replace(/\D/g, '') : null;
+    const matches = Array.from(text.matchAll(/([+＋−–—-])\s*([0-9][0-9\s.,]*)\s*(?:₽|руб\.?|р\b)?/gi));
+    for (const match of matches) {
+      const sign = match[1];
+      const digits = match[2].replace(/\D/g, '');
+      if (amountDigits && digits && !digits.includes(amountDigits) && !amountDigits.includes(digits)) continue;
+      return sign === '+' || sign === '＋' ? 'income' : 'expense';
+    }
+
+    const lowered = text.toLowerCase();
+    if (/\b(поступление|зачисление|пополнение|перевод от|вам перевели|получен перевод|приход)\b/i.test(lowered)) return 'income';
+    if (/\b(списание|оплата|покупка|перевод\s+кому|плат[её]ж|расход)\b/i.test(lowered)) return 'expense';
+    return null;
   }
 
   private shouldStoreRecognitionFiles() {
