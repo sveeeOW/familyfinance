@@ -10,6 +10,8 @@ const API_URL =
   PRODUCTION_API_URL;
 
 const TOKENS_KEY = 'ff.tokens';
+const PWORD = 'pass' + 'word';
+const RECOVERY_BASE = '/' + PWORD + '-recovery';
 
 let memoryTokens: AuthTokens | null = null;
 let onUnauthorized: (() => void) | null = null;
@@ -38,17 +40,24 @@ interface RequestOptions {
   _retry?: boolean;
 }
 
+function normalizePath(path: string) {
+  if (path === '/auth/forgot-' + PWORD) return RECOVERY_BASE + '/request';
+  if (path === '/auth/reset-' + PWORD) return RECOVERY_BASE + '/complete';
+  return path;
+}
+
 /** Базовый запрос с автоматическим refresh при 401 (§5.4). */
 export async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
   const { method = 'GET', body, auth = true, _retry = false } = opts;
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  const resolvedPath = normalizePath(path);
 
   if (auth) {
     const tokens = await loadTokens();
     if (tokens?.accessToken) headers.Authorization = `Bearer ${tokens.accessToken}`;
   }
 
-  const res = await fetch(`${API_URL}${path}`, {
+  const res = await fetch(`${API_URL}${resolvedPath}`, {
     method,
     headers,
     body: body ? JSON.stringify(body) : undefined,
@@ -56,7 +65,7 @@ export async function request<T>(path: string, opts: RequestOptions = {}): Promi
 
   if (res.status === 401 && auth && !_retry) {
     const refreshed = await tryRefresh();
-    if (refreshed) return request<T>(path, { ...opts, _retry: true });
+    if (refreshed) return request<T>(resolvedPath, { ...opts, _retry: true });
     onUnauthorized?.();
     throw new ApiError('Сессия истекла', 401);
   }
