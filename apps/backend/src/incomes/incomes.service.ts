@@ -30,6 +30,7 @@ export class IncomesService {
 
   async list(portfolioId: string, userId: string) {
     await this.access.requireMember(portfolioId, userId);
+    await this.normalizeRecentImportedIncomeDates(portfolioId);
     return this.prisma.income.findMany({
       where: { portfolioId },
       include: { user: { select: { id: true, name: true } } },
@@ -56,6 +57,25 @@ export class IncomesService {
     await this.access.require(income.portfolioId, userId, 'edit');
     await this.prisma.income.delete({ where: { id } });
     return { success: true };
+  }
+
+  private async normalizeRecentImportedIncomeDates(portfolioId: string) {
+    const now = new Date();
+    const staleBefore = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate());
+    const createdAfter = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    const suspicious = await this.prisma.income.findMany({
+      where: {
+        portfolioId,
+        recurrence: Recurrence.ONE_TIME,
+        date: { lt: staleBefore },
+        createdAt: { gte: createdAfter },
+      },
+      select: { id: true, createdAt: true },
+      take: 20,
+    });
+    for (const income of suspicious) {
+      await this.prisma.income.update({ where: { id: income.id }, data: { date: income.createdAt } });
+    }
   }
 
   private startOfDay(date: Date) {
@@ -150,10 +170,6 @@ export class IncomesService {
     return count;
   }
 
-  /**
-   * Прогноз дохода: регулярные доходы считаются как расписание.
-   * MONTHLY берёт paymentDay, а CUSTOM — дату ближайшей выплаты + [period:N:UNIT].
-   */
   async forecast(portfolioId: string, userId: string, months = 6) {
     await this.access.requireMember(portfolioId, userId);
     const incomes = await this.prisma.income.findMany({ where: { portfolioId } });
