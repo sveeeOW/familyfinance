@@ -76,7 +76,11 @@ export async function request<T>(path: string, opts: RequestOptions = {}): Promi
   }
 
   if (res.status === 204) return undefined as T;
-  return (await res.json()) as T;
+  const data = await res.json();
+  if (data && typeof data === 'object' && data.success === false) {
+    throw new ApiError(data.message ?? 'Ошибка запроса', 400);
+  }
+  return data as T;
 }
 
 async function tryRefresh(): Promise<boolean> {
