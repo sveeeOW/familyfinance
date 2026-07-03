@@ -34,14 +34,15 @@ export class MailerService implements OnModuleInit {
 
   async send(to: string, subject: string, text: string, html?: string) {
     if (!this.transport) {
-      this.logger.log(`[EMAIL → ${to}] ${subject}\n${text}`);
+      this.logger.log(`[EMAIL console] ${subject}`);
       return { delivered: false, mode: 'console' };
     }
     try {
-      await this.transport.sendMail({ from: this.from, to, subject, text, html });
-      return { delivered: true, mode: 'smtp' };
+      const info = await this.transport.sendMail({ from: this.from, to, subject, text, html });
+      this.logger.log(`SMTP accepted email: messageId=${info.messageId ?? 'none'} accepted=${info.accepted?.length ?? 0} rejected=${info.rejected?.length ?? 0} response=${info.response ?? 'none'}`);
+      return { delivered: true, mode: 'smtp', messageId: info.messageId, accepted: info.accepted, rejected: info.rejected };
     } catch (e) {
-      this.logger.error(`Не удалось отправить письмо на ${to}: ${(e as Error).message}`);
+      this.logger.error(`SMTP send failed: ${(e as Error).message}`);
       return { delivered: false, mode: 'error', error: (e as Error).message };
     }
   }
