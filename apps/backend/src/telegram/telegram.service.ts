@@ -1,5 +1,5 @@
 import { Injectable, Logger, OnApplicationShutdown, OnModuleInit } from '@nestjs/common';
-import { ExpenseStatus } from '@prisma/client';
+import { ExpenseStatus, PortfolioType } from '@prisma/client';
 import { Markup, Telegraf } from 'telegraf';
 import { AiService, RecognitionDraft } from '../ai/ai.service';
 import { CreditCardsService } from '../credit-cards/credit-cards.service';
@@ -317,7 +317,7 @@ export class TelegramService implements OnModuleInit, OnApplicationShutdown {
     const user = await this.userByTelegram(String(ctx.from!.id));
     await this.safeAnswer(ctx, 'Открываю портфели…');
     if (!user) return this.safeReply(ctx, 'Аккаунт не привязан.');
-    const portfolios = await this.userPortfolios(user.id);
+    const portfolios = await this.visiblePortfolios(user.id);
     if (!portfolios.length) return this.safeReply(ctx, 'У вас нет доступных портфелей.');
     if (portfolios.length === 1) return this.onSetPortfolio(ctx, logId, portfolios[0].id);
     const shortLogId = this.encodeId(logId);
@@ -406,12 +406,22 @@ export class TelegramService implements OnModuleInit, OnApplicationShutdown {
     return this.prisma.user.findUnique({ where: { telegramId } });
   }
 
-  private async userPortfolios(userId: string) {
-    return this.prisma.portfolio.findMany({ where: { members: { some: { userId, status: 'ACTIVE' } } }, orderBy: [{ isDefault: 'desc' }, { name: 'asc' }, { createdAt: 'asc' }] });
+  private async visiblePortfolios(userId: string) {
+    const portfolios = await this.prisma.portfolio.findMany({
+      where: { members: { some: { userId, status: 'ACTIVE' } } },
+      include: { _count: { select: { members: true } } },
+      orderBy: [{ isDefault: 'desc' }, { name: 'asc' }, { createdAt: 'asc' }],
+    });
+    const nonPrivate = portfolios.filter((portfolio) => !this.isSingleUserPersonalPortfolio(portfolio, userId));
+    return nonPrivate.length ? nonPrivate : portfolios;
+  }
+
+  private isSingleUserPersonalPortfolio(portfolio: any, userId: string) {
+    return portfolio?.type === PortfolioType.PERSONAL && portfolio?.ownerUserId === userId && (portfolio?._count?.members ?? 1) <= 1;
   }
 
   private async defaultPortfolioId(userId: string): Promise<string | null> {
-    const portfolios = await this.userPortfolios(userId);
+    const portfolios = await this.visiblePortfolios(userId);
     return portfolios[0]?.id ?? null;
   }
 
