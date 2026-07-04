@@ -20,6 +20,10 @@ export class AnalyticsService {
     return new Date(date.getFullYear(), date.getMonth(), date.getDate());
   }
 
+  private sameDay(a: Date, b: Date) {
+    return this.startOfDay(a).getTime() === this.startOfDay(b).getTime();
+  }
+
   private daysInMonth(year: number, month: number) {
     return new Date(year, month + 1, 0).getDate();
   }
@@ -63,6 +67,13 @@ export class AnalyticsService {
     if (comment.includes('каждый месяц')) return Recurrence.MONTHLY;
     if (comment.includes('[period:')) return Recurrence.CUSTOM;
     return null;
+  }
+
+  private confirmedIncomeDates(text?: string | null) {
+    const matches = Array.from(String(text ?? '').matchAll(/\[confirmed:(\d{4}-\d{2}-\d{2})\]/g));
+    return matches
+      .map((match) => new Date(`${match[1]}T00:00:00`))
+      .filter((date) => !Number.isNaN(date.getTime()));
   }
 
   private addPeriod(date: Date, recurrence: Recurrence, text?: string | null): Date {
@@ -181,9 +192,15 @@ export class AnalyticsService {
 
   private postedIncomeToDate(incomes: any[], end: Date) {
     return incomes.reduce((sum, income) => {
+      const amount = Number(income.amount);
+      if (income.recurrence === Recurrence.ONE_TIME) {
+        const paidDate = this.businessDayBeforeWeekend(income.date);
+        return paidDate < end ? sum + amount : sum;
+      }
+      const confirmed = this.confirmedIncomeDates(income.description).filter((date) => date < end);
+      if (confirmed.length) return sum + amount * confirmed.length;
       const paidDate = this.businessDayBeforeWeekend(income.date);
-      if (paidDate >= end) return sum;
-      return sum + Number(income.amount);
+      return paidDate < end ? sum + amount : sum;
     }, 0);
   }
 
@@ -198,6 +215,48 @@ export class AnalyticsService {
         paymentDay: item.paymentDay,
       });
       return sum + Number(item.amount) * count;
+    }, 0);
+  }
+
+  private matchesActualExpense(item: { amount: any; title?: string | null; categoryId?: string | null }, date: Date, expenses: any[]) {
+    const title = String(item.title ?? '').trim().toLowerCase();
+    return expenses.some((expense) => {
+      const sameAmount = Math.abs(Number(expense.amount) - Number(item.amount)) < 0.01;
+      if (!sameAmount || !this.sameDay(expense.date, date)) return false;
+      if ((item.categoryId ?? null) && (expense.categoryId ?? null) === item.categoryId) return true;
+      const expenseTitle = String(expense.title ?? expense.merchant ?? expense.description ?? '').trim().toLowerCase();
+      return Boolean(title && expenseTitle && (expenseTitle.includes(title) || title.includes(expenseTitle)));
+    });
+  }
+
+  private recurringDueToDate(items: any[], actualExpenses: any[], start: Date, end: Date) {
+    return items.reduce((sum, item) => {
+      let cursor = this.startOfDay(item.nextPaymentDate);
+      let guard = 0;
+      while (cursor < end && guard < 600) {
+        if (cursor >= start && !this.matchesActualExpense(item, cursor, actualExpenses)) sum += Number(item.amount);
+        cursor = this.addPeriod(cursor, item.recurrence, item.comment);
+        guard += 1;
+      }
+      return sum;
+    }, 0);
+  }
+
+  private creditsDueToDate(credits: any[], actualExpenses: any[], start: Date, end: Date) {
+    return credits.reduce((sum, credit) => {
+      let cursor = new Date(start.getFullYear(), start.getMonth(), 1);
+      let guard = 0;
+      while (cursor < end && guard < 120) {
+        const planned = this.dateInMonth(cursor.getFullYear(), cursor.getMonth(), credit.paymentDay);
+        const started = !credit.startDate || planned >= this.startOfDay(credit.startDate);
+        const notEnded = !credit.endDate || planned <= this.startOfDay(credit.endDate);
+        if (planned >= start && planned < end && started && notEnded && !this.matchesActualExpense({ amount: credit.monthlyPayment, title: credit.title }, planned, actualExpenses)) {
+          sum += Number(credit.monthlyPayment);
+        }
+        cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1);
+        guard += 1;
+      }
+      return sum;
     }, 0);
   }
 
@@ -276,7 +335,10 @@ export class AnalyticsService {
 
     const scheduledIncome = this.incomeForRange(incomes, start, end);
     const allTimeIncomeToDate = this.postedIncomeToDate(incomes, todayEnd);
+    const actualExpenseThisMonthToDate = expenses.filter((e) => e.date < todayEnd);
     const allTimeActualExpense = allExpensesToDate.reduce((s, e) => s + Number(e.amount), 0);
+    const dueRecurringToDate = this.recurringDueToDate(recurring, actualExpenseThisMonthToDate, start, todayEnd);
+    const dueCreditsToDate = this.creditsDueToDate(credits, actualExpenseThisMonthToDate, start, todayEnd);
     const actualExpense = expenses.reduce((s, e) => s + Number(e.amount), 0);
     const plannedExpense = this.recurringForRange(recurring, start, end) + this.recurringExpensesFromExpenseComments(recurringExpenseMarkers, recurring, start, end);
     const creditExpense = credits.reduce((s, c) => s + Number(c.monthlyPayment), 0);
@@ -284,7 +346,7 @@ export class AnalyticsService {
     const totalExpense = actualExpense + plannedExpense + creditExpense;
     const balance = totalIncome - totalExpense;
     const obligatory = plannedExpense + creditExpense;
-    const availableNow = allTimeIncomeToDate - allTimeActualExpense;
+    const availableNow = allTimeIncomeToDate - allTimeActualExpense - dueRecurringToDate - dueCreditsToDate;
 
     const byCategoryMap = new Map<string, { id: string; name: string; color?: string; icon?: string; amount: number }>();
     for (const e of expenses) {
@@ -311,7 +373,7 @@ export class AnalyticsService {
     const personal = expenses.filter((e) => e.scope === ExpenseScope.PERSONAL).reduce((s, e) => s + Number(e.amount), 0);
     const shared = totalExpense - personal;
     const remainingRecurring = this.recurringForRange(recurring, todayEnd, end) + this.recurringExpensesFromExpenseComments(recurringExpenseMarkers, recurring, todayEnd, end);
-    const remainingCredits = credits.filter((c) => c.paymentDay >= today.getDate()).reduce((s, c) => s + Number(c.monthlyPayment), 0);
+    const remainingCredits = credits.filter((c) => c.paymentDay > today.getDate()).reduce((s, c) => s + Number(c.monthlyPayment), 0);
     const remainingObligatory = remainingRecurring + remainingCredits;
 
     return {
@@ -324,7 +386,9 @@ export class AnalyticsService {
       currentBalance: Math.round(availableNow),
       availableNow: Math.round(availableNow),
       allTimeIncome: Math.round(allTimeIncomeToDate),
-      allTimeExpense: Math.round(allTimeActualExpense),
+      allTimeExpense: Math.round(allTimeActualExpense + dueRecurringToDate + dueCreditsToDate),
+      dueRecurringToDate: Math.round(dueRecurringToDate),
+      dueCreditsToDate: Math.round(dueCreditsToDate),
       obligatoryTotal: Math.round(obligatory),
       remainingObligatory: Math.round(remainingObligatory),
       freeMoney: Math.round(availableNow),
@@ -377,7 +441,7 @@ export class AnalyticsService {
       this.prisma.expense.findMany({ where: { portfolioId, status: ExpenseStatus.CONFIRMED, date: { gte: new Date(start.getFullYear(), start.getMonth() - 3, 1), lt: start } } }),
     ]);
     const creditMonthly = credits.reduce((s, c) => s + Number(c.monthlyPayment), 0);
-    const remainingCredits = credits.filter((c) => c.paymentDay >= now.getDate()).reduce((s, c) => s + Number(c.monthlyPayment), 0);
+    const remainingCredits = credits.filter((c) => c.paymentDay > now.getDate()).reduce((s, c) => s + Number(c.monthlyPayment), 0);
     const actualExpenseToDate = currentMonthExpenses.filter((e) => e.date < todayStart).reduce((s, e) => s + Number(e.amount), 0);
     const futureOneOffExpense = currentMonthExpenses.filter((e) => e.date >= todayStart).reduce((s, e) => s + Number(e.amount), 0);
     const actualIncomeToDate = this.incomeForRange(incomes, start, todayStart);
