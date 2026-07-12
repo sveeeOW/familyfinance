@@ -1,39 +1,33 @@
-import React, { useCallback, useMemo, useState } from 'react';
-import { Pressable, RefreshControl, ScrollView, Text, TextInput, View } from 'react-native';
+import React, { useCallback, useState } from 'react';
+import { Pressable, RefreshControl, ScrollView, Text, View } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { api } from '../api/endpoints';
 import { AnalyticsSummary } from '../api/types';
 import { usePortfolios } from '../store/portfolio';
 import { Button, Card, Money, ScreenTitle } from '../components/ui';
 import { PortfolioPicker } from '../components/PortfolioPicker';
-import { colors, radius, spacing } from '../theme';
+import { colors, spacing } from '../theme';
 
 export default function DashboardScreen({ navigation }: any) {
   const { selectedId, load: loadPortfolios } = usePortfolios();
   const [summary, setSummary] = useState<AnalyticsSummary | null>(null);
   const [forecast, setForecast] = useState<any>(null);
-  const [audit, setAudit] = useState<any>(null);
-  const [mainAccount, setMainAccount] = useState('');
-  const [savingsAccount, setSavingsAccount] = useState('');
-  const [auditBusy, setAuditBusy] = useState(false);
   const [clarifyCount, setClarifyCount] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
 
   const loadData = useCallback(async () => {
     if (!selectedId) return;
     try {
-      const [s, f, c, a] = await Promise.all([
+      const [s, f, c] = await Promise.all([
         api.summary(selectedId),
         api.forecast(selectedId),
         api.needsClarification(selectedId),
-        api.balanceAudit(selectedId),
       ]);
       setSummary(s);
       setForecast(f);
       setClarifyCount(c.length);
-      setAudit(a);
     } catch {
-      // экран покажет последнее доступное состояние
+      // экран покажет пустое состояние
     }
   }, [selectedId]);
 
@@ -50,17 +44,6 @@ export default function DashboardScreen({ navigation }: any) {
   const futureExpense = summary?.totalExpense ?? summary?.plannedExpense ?? forecast?.restOfMonth?.expense ?? forecast?.obligatory ?? 0;
   const monthBalance = futureIncome - futureExpense;
   const forecastBalance = actualBalance + monthBalance;
-  const enteredActual = useMemo(() => parseMoney(mainAccount) + parseMoney(savingsAccount), [mainAccount, savingsAccount]);
-
-  const runAudit = async () => {
-    if (!selectedId) return;
-    setAuditBusy(true);
-    try {
-      setAudit(await api.balanceAudit(selectedId, enteredActual));
-    } finally {
-      setAuditBusy(false);
-    }
-  };
 
   return (
     <ScrollView
@@ -75,56 +58,8 @@ export default function DashboardScreen({ navigation }: any) {
         <Text style={labelStyle}>Доступная сумма сейчас</Text>
         <Money value={actualBalance} />
         <Text style={{ color: colors.textMuted, marginTop: 4, fontSize: 12 }}>
-          Начальный остаток + подтверждённые доходы − подтверждённые расходы. Планы и будущие платежи сюда не входят.
+          Считается автоматически: начальный остаток плюс уже поступившие доходы минус подтверждённые расходы до сегодняшнего дня.
         </Text>
-      </Card>
-
-      <Card style={{ marginTop: spacing(1.5) }}>
-        <Text style={{ color: colors.text, fontWeight: '700', fontSize: 16 }}>Проверка баланса</Text>
-        <Text style={{ color: colors.textMuted, marginTop: 4, fontSize: 12 }}>
-          Введите остатки на счетах. Накопительный или инвестиционный счёт можно учитывать второй суммой.
-        </Text>
-        <View style={{ gap: spacing(1), marginTop: spacing(1.25) }}>
-          <BalanceInput label="Основные счета" value={mainAccount} onChangeText={setMainAccount} placeholder="162 898,93" />
-          <BalanceInput label="Накопительный счёт" value={savingsAccount} onChangeText={setSavingsAccount} placeholder="102 491,54" />
-        </View>
-        <View style={{ marginTop: spacing(1.25) }}>
-          <Button title={enteredActual > 0 ? `Сверить ${fmt(enteredActual)}` : 'Сверить с банком'} onPress={runAudit} loading={auditBusy} />
-        </View>
-
-        {audit?.formula ? (
-          <View style={{ marginTop: spacing(1.5), gap: spacing(0.75) }}>
-            <Row label="Начальный остаток" value={<Money value={audit.formula.openingBalance ?? 0} size={16} />} />
-            <Divider />
-            <Row label="Подтверждённые доходы" value={<Money value={audit.formula.confirmedIncome ?? 0} tone="income" size={16} />} />
-            <Divider />
-            <Row label="Подтверждённые расходы" value={<Money value={audit.formula.confirmedExpense ?? 0} tone="expense" size={16} />} />
-            <Divider />
-            <Row label="Расчётный баланс" value={<Money value={audit.formula.calculatedBalance ?? 0} size={16} />} />
-            {audit.formula.actualBalance != null ? <>
-              <Divider />
-              <Row label="Фактически на счетах" value={<Money value={audit.formula.actualBalance} size={16} />} />
-              <Divider />
-              <Row label="Расхождение" value={<Money value={audit.formula.difference ?? 0} tone={Math.abs(audit.formula.difference ?? 0) < 1 ? 'income' : 'expense'} size={16} />} />
-            </> : null}
-          </View>
-        ) : null}
-
-        {audit?.warnings?.length ? (
-          <View style={{ marginTop: spacing(1.25), gap: spacing(0.75) }}>
-            {audit.warnings.map((warning: any, index: number) => (
-              <View key={`${warning.code}-${index}`} style={{ padding: spacing(1), borderRadius: radius.md, backgroundColor: colors.yellowSoft }}>
-                <Text style={{ color: colors.text, fontSize: 12 }}>⚠️ {warning.message}{warning.amount != null ? ` Разница: ${fmt(warning.amount)}` : ''}</Text>
-              </View>
-            ))}
-          </View>
-        ) : null}
-
-        {audit?.counts ? (
-          <Text style={{ color: colors.textMuted, marginTop: spacing(1.25), fontSize: 12 }}>
-            Учтено: доходов {audit.counts.incomeEntries}, расходов {audit.counts.expenseEntries}. Возможных дублей: {Number(audit.counts.possibleExpenseDuplicates ?? 0) + Number(audit.counts.possibleIncomeDuplicates ?? 0)}.
-          </Text>
-        ) : null}
       </Card>
 
       <Card style={{ marginTop: spacing(1.5) }}>
@@ -140,7 +75,7 @@ export default function DashboardScreen({ navigation }: any) {
           <Row label="Ожидаемые расходы" value={<Money value={futureExpense} tone="expense" size={16} />} />
         </View>
         <Text style={{ color: colors.textMuted, marginTop: spacing(1), fontSize: 12 }}>
-          Прогноз считается отдельно от текущего баланса и включает будущие доходы и обязательства.
+          Прогноз учитывает все доходы и расходы текущего месяца: уже совершённые, регулярные и запланированные.
         </Text>
       </Card>
 
@@ -154,7 +89,7 @@ export default function DashboardScreen({ navigation }: any) {
 
       <View style={{ flexDirection: 'row', gap: spacing(1.5), marginTop: spacing(1.5) }}>
         <Card style={{ flex: 1 }}>
-          <Text style={labelStyle}>Расчётный баланс</Text>
+          <Text style={labelStyle}>Накопительный баланс</Text>
           <Money value={summary?.availableNow ?? 0} />
         </Card>
         <Card style={{ flex: 1 }}>
@@ -211,22 +146,6 @@ export default function DashboardScreen({ navigation }: any) {
   );
 }
 
-function BalanceInput({ label, value, onChangeText, placeholder }: { label: string; value: string; onChangeText: (value: string) => void; placeholder: string }) {
-  return (
-    <View>
-      <Text style={{ color: colors.textMuted, fontSize: 12, marginBottom: 5 }}>{label}</Text>
-      <TextInput
-        value={value}
-        onChangeText={onChangeText}
-        keyboardType="decimal-pad"
-        placeholder={placeholder}
-        placeholderTextColor={colors.textSubtle}
-        style={{ minHeight: 46, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, paddingHorizontal: spacing(1.25), color: colors.text, backgroundColor: colors.bg }}
-      />
-    </View>
-  );
-}
-
 function Row({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: spacing(1) }}>
@@ -240,11 +159,5 @@ function Divider() {
   return <View style={{ height: 1, backgroundColor: colors.border, marginVertical: spacing(1.25) }} />;
 }
 
-function parseMoney(value: string) {
-  const normalized = String(value ?? '').replace(/\s/g, '').replace(',', '.').replace(/[^0-9.-]/g, '');
-  const parsed = Number(normalized);
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
 const labelStyle = { color: colors.textMuted, fontSize: 13, marginBottom: 6 } as const;
-const fmt = (n?: number) => new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 }).format(n ?? 0) + ' ₽';
+const fmt = (n?: number) => new Intl.NumberFormat('ru-RU').format(n ?? 0) + ' ₽';
