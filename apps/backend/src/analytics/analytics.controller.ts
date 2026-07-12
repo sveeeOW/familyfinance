@@ -1,6 +1,7 @@
 import { Controller, Get, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { AnalyticsService } from './analytics.service';
+import { BalanceEngineService } from './balance-engine.service';
 import { ForecastService } from './forecast.service';
 import { InvestmentsService } from '../investments/investments.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -13,13 +14,38 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 export class AnalyticsController {
   constructor(
     private readonly analytics: AnalyticsService,
+    private readonly balanceEngine: BalanceEngineService,
     private readonly forecastService: ForecastService,
     private readonly investments: InvestmentsService,
   ) {}
 
   @Get('summary')
-  summary(@Query('portfolioId') portfolioId: string, @CurrentUser('userId') userId: string) {
-    return this.analytics.summary(portfolioId, userId);
+  async summary(@Query('portfolioId') portfolioId: string, @CurrentUser('userId') userId: string) {
+    const [summary, balance] = await Promise.all([
+      this.analytics.summary(portfolioId, userId),
+      this.balanceEngine.current(portfolioId, userId),
+    ]);
+    return {
+      ...summary,
+      currentBalance: balance.currentBalance,
+      availableNow: balance.currentBalance,
+      freeMoney: balance.currentBalance,
+      openingBalance: balance.openingBalance,
+      confirmedIncome: balance.confirmedIncome,
+      confirmedExpense: balance.confirmedExpense,
+    };
+  }
+
+  @Get('balance-audit')
+  balanceAudit(
+    @Query('portfolioId') portfolioId: string,
+    @Query('actualBalance') actualBalance: string | undefined,
+    @CurrentUser('userId') userId: string,
+  ) {
+    const parsed = actualBalance == null || actualBalance === '' ? undefined : Number(actualBalance);
+    return this.balanceEngine.audit(portfolioId, userId, {
+      actualBalance: Number.isFinite(parsed) ? parsed : undefined,
+    });
   }
 
   @Get('monthly')
