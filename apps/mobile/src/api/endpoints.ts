@@ -124,6 +124,10 @@ export const api = {
     request<any>(`/analytics/forecast?portfolioId=${portfolioId}`),
   monthly: (portfolioId: string) =>
     request<any[]>(`/analytics/monthly?portfolioId=${portfolioId}`),
+  balanceAudit: (portfolioId: string, actualBalance?: number) => {
+    const actual = actualBalance == null ? '' : `&actualBalance=${encodeURIComponent(String(actualBalance))}`;
+    return request<any>(`/analytics/balance-audit?portfolioId=${portfolioId}${actual}`);
+  },
 
   // Telegram
   telegramLinkCode: () =>
