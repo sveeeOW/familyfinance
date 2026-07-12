@@ -30,22 +30,7 @@ export class AnalyticsController {
       currentBalance: balance.currentBalance,
       availableNow: balance.currentBalance,
       freeMoney: balance.currentBalance,
-      openingBalance: balance.openingBalance,
-      confirmedIncome: balance.confirmedIncome,
-      confirmedExpense: balance.confirmedExpense,
     };
-  }
-
-  @Get('balance-audit')
-  balanceAudit(
-    @Query('portfolioId') portfolioId: string,
-    @Query('actualBalance') actualBalance: string | undefined,
-    @CurrentUser('userId') userId: string,
-  ) {
-    const parsed = actualBalance == null || actualBalance === '' ? undefined : Number(actualBalance);
-    return this.balanceEngine.audit(portfolioId, userId, {
-      actualBalance: Number.isFinite(parsed) ? parsed : undefined,
-    });
   }
 
   @Get('monthly')
